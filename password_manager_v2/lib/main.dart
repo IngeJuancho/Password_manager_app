@@ -1,0 +1,966 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:crypto/crypto.dart';
+import 'dart:convert';
+import 'dart:math';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Gestor de Contraseñas Pro',
+      // ✨ CAMBIO DE COLOR: Tema principal cambiado a azul
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        useMaterial3: true,
+        textTheme: GoogleFonts.interTextTheme(
+          Theme.of(context).textTheme,
+        ),
+      ),
+      home: AuthScreen(),
+    );
+  }
+}
+
+class AuthScreen extends StatefulWidget {
+  const AuthScreen({super.key});
+
+  @override
+  _AuthScreenState createState() => _AuthScreenState();
+}
+
+class _AuthScreenState extends State<AuthScreen> {
+  final LocalAuthentication auth = LocalAuthentication();
+  bool _isAuthenticating = false;
+  String _authStatus = 'Esperando autenticación...';
+
+  @override
+  void initState() {
+    super.initState();
+    _authenticateWithBiometrics();
+  }
+
+  Future<void> _authenticateWithBiometrics() async {
+    setState(() {
+      _isAuthenticating = true;
+      _authStatus = 'Autenticando...';
+    });
+    
+    try {
+      final bool didAuthenticate = await auth.authenticate(
+        localizedReason: 'Autentícate para acceder a tus contraseñas',
+        options: AuthenticationOptions(
+          biometricOnly: false,
+          stickyAuth: true,
+        ),
+      );
+
+      if (didAuthenticate) {
+        _navigateToHome();
+      } else {
+        setState(() {
+          _isAuthenticating = false;
+          _authStatus = 'Autenticación fallida. Intenta nuevamente.';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _isAuthenticating = false;
+        _authStatus = 'Error de autenticación. Intenta nuevamente.';
+      });
+    }
+  }
+
+  void _navigateToHome() {
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => PasswordManagerHome()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        // ✨ CAMBIO DE COLOR: Gradiente de la pantalla de autenticación
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Colors.blue[800]!, Colors.blue[400]!],
+          ),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.security, size: 120, color: Colors.white),
+              SizedBox(height: 30),
+              Text(
+                'Gestor de Contraseñas Pro',
+                style: GoogleFonts.inter(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 50),
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  _authStatus,
+                  style: TextStyle(color: Colors.white, fontSize: 16),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              SizedBox(height: 30),
+              if (_isAuthenticating)
+                CircularProgressIndicator(color: Colors.white)
+              else
+                ElevatedButton.icon(
+                  onPressed: _authenticateWithBiometrics,
+                  icon: Icon(Icons.fingerprint),
+                  label: Text('Autenticarse'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    // ✨ CAMBIO DE COLOR: Texto del botón de autenticación
+                    foregroundColor: Colors.blue[800],
+                    padding: EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class PasswordEntry {
+  String app;
+  String password;
+  DateTime createdAt;
+  DateTime? lastModified;
+
+  PasswordEntry({
+    required this.app,
+    required this.password,
+    required this.createdAt,
+    this.lastModified,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'app': app,
+      'password': password,
+      'createdAt': createdAt.toIso8601String(),
+      'lastModified': lastModified?.toIso8601String(),
+    };
+  }
+
+  factory PasswordEntry.fromJson(Map<String, dynamic> json) {
+    return PasswordEntry(
+      app: json['app'],
+      password: json['password'],
+      createdAt: DateTime.parse(json['createdAt']),
+      lastModified: json['lastModified'] != null 
+          ? DateTime.parse(json['lastModified'])
+          : null,
+    );
+  }
+}
+
+class PasswordManagerHome extends StatefulWidget {
+  const PasswordManagerHome({super.key});
+
+  @override
+  _PasswordManagerHomeState createState() => _PasswordManagerHomeState();
+}
+
+class _PasswordManagerHomeState extends State<PasswordManagerHome> {
+  Map<String, PasswordEntry> _passwords = {};
+  final Set<String> _visiblePasswords = {};
+  List<String> _filteredApps = [];
+  final TextEditingController _appController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _passwordFocusNode = FocusNode();
+  String? _editingApp;
+  
+  static const String _storageKey = 'encrypted_passwords';
+  static const String _encryptionKey = 'my_secure_key_2024';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPasswords();
+    _searchController.addListener(_filterPasswords);
+  }
+
+  @override
+  void dispose() {
+    _appController.dispose();
+    _passwordController.dispose();
+    _searchController.dispose();
+    _passwordFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _filterPasswords() {
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      if (query.isEmpty) {
+        _filteredApps = _passwords.keys.toList();
+      } else {
+        _filteredApps = _passwords.keys
+            .where((app) => _passwords[app]!.app.toLowerCase().contains(query))
+            .toList();
+      }
+      _filteredApps.sort((a, b) => a.compareTo(b));
+    });
+  }
+
+  Future<void> _loadPasswords() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final passwordsData = prefs.getString(_storageKey);
+      
+      if (passwordsData != null) {
+        final decryptedData = _decrypt(passwordsData);
+        final Map<String, dynamic> passwordsMap = json.decode(decryptedData);
+        
+        if (mounted) {
+          setState(() {
+            _passwords = Map.from(passwordsMap.map((key, value) =>
+              MapEntry(key, PasswordEntry.fromJson(value))
+            ));
+            _filterPasswords();
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        _showSnackBar('Error al cargar las contraseñas', Colors.red);
+      }
+    }
+  }
+
+  Future<void> _savePasswords() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final passwordsMap = _passwords.map(
+        (key, value) => MapEntry(key, value.toJson())
+      );
+      
+      final jsonString = json.encode(passwordsMap);
+      final encryptedData = _encrypt(jsonString);
+      
+      await prefs.setString(_storageKey, encryptedData);
+    } catch (e) {
+      _showSnackBar('Error al guardar las contraseñas', Colors.red);
+    }
+  }
+
+  String _encrypt(String data) {
+    final bytes = utf8.encode(data);
+    final key = utf8.encode(_encryptionKey);
+    final hmac = Hmac(sha256, key);
+    final digest = hmac.convert(bytes);
+    final encrypted = base64.encode(bytes);
+    return '$encrypted.${digest.toString()}';
+  }
+
+  String _decrypt(String encryptedData) {
+    final parts = encryptedData.split('.');
+    if (parts.length != 2) throw Exception('Datos inválidos');
+    
+    final bytes = base64.decode(parts[0]);
+    return utf8.decode(bytes);
+  }
+
+  String _generatePassword({
+    int length = 16,
+    bool includeUppercase = true,
+    bool includeLowercase = true,
+    bool includeNumbers = true,
+    bool includeSymbols = true,
+  }) {
+    String charset = '';
+    
+    if (includeUppercase) charset += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    if (includeLowercase) charset += 'abcdefghijklmnopqrstuvwxyz';
+    if (includeNumbers) charset += '0123456789';
+    if (includeSymbols) charset += '!@#\$%^&*()_+-=[]{}|;:,.<>?';
+    
+    if (charset.isEmpty) return '';
+    
+    Random random = Random.secure();
+    return List.generate(length, (index) => charset[random.nextInt(charset.length)]).join();
+  }
+
+  void _showPasswordGenerator() {
+    int length = 16;
+    bool includeUppercase = true;
+    bool includeLowercase = true;
+    bool includeNumbers = true;
+    bool includeSymbols = true;
+    String generatedPassword = '';
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Generador de Contraseñas'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Text('Longitud: '),
+                    Expanded(
+                      child: Slider(
+                        value: length.toDouble(),
+                        min: 8,
+                        max: 32,
+                        divisions: 24,
+                        label: length.toString(),
+                        onChanged: (value) {
+                          setDialogState(() => length = value.toInt());
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                CheckboxListTile(
+                  title: Text('Mayúsculas (A-Z)'),
+                  value: includeUppercase,
+                  onChanged: (value) => setDialogState(() => includeUppercase = value!),
+                ),
+                CheckboxListTile(
+                  title: Text('Minúsculas (a-z)'),
+                  value: includeLowercase,
+                  onChanged: (value) => setDialogState(() => includeLowercase = value!),
+                ),
+                CheckboxListTile(
+                  title: Text('Números (0-9)'),
+                  value: includeNumbers,
+                  onChanged: (value) => setDialogState(() => includeNumbers = value!),
+                ),
+                CheckboxListTile(
+                  title: Text('Símbolos (!@#)'),
+                  value: includeSymbols,
+                  onChanged: (value) => setDialogState(() => includeSymbols = value!),
+                ),
+                SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: () {
+                    setDialogState(() {
+                      generatedPassword = _generatePassword(
+                        length: length,
+                        includeUppercase: includeUppercase,
+                        includeLowercase: includeLowercase,
+                        includeNumbers: includeNumbers,
+                        includeSymbols: includeSymbols,
+                      );
+                    });
+                  },
+                  child: Text('Generar Nueva'),
+                ),
+                if (generatedPassword.isNotEmpty) ...[
+                  SizedBox(height: 10),
+                  Container(
+                    padding: EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: SelectableText(
+                      generatedPassword,
+                      style: GoogleFonts.sourceCodePro(),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancelar'),
+            ),
+            if (generatedPassword.isNotEmpty)
+              TextButton(
+                onPressed: () {
+                  _passwordController.text = generatedPassword;
+                  Navigator.pop(context);
+                },
+                child: Text('Usar Contraseña'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showLoadingIndicator(String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        content: Row(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 20),
+            Text(message),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Future<void> _exportPasswords() async {
+    _showLoadingIndicator('Preparando exportación...');
+    try {
+      final passwordsMap = _passwords.map((key, value) => 
+        MapEntry(key, value.toJson())
+      );
+      
+      final jsonString = json.encode(passwordsMap);
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final fileName = 'passwords_backup_$timestamp.json';
+      
+      final bytes = utf8.encode(jsonString);
+
+      String? outputFile = await FilePicker.platform.saveFile(
+        dialogTitle: 'Por favor, selecciona dónde guardar el backup:',
+        fileName: fileName,
+        bytes: bytes,
+      );
+
+      if (mounted) Navigator.pop(context); 
+
+      if (outputFile != null) {
+        _showSnackBar('Backup exportado exitosamente!', Colors.green);
+      } else {
+        _showSnackBar('Exportación cancelada por el usuario.', Colors.orange);
+      }
+
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      _showSnackBar('Error al exportar: ${e.toString()}', Colors.red);
+    }
+  }
+
+  Future<void> _importPasswords() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+        dialogTitle: 'Seleccionar archivo de backup',
+      );
+      
+      if (result != null && result.files.single.path != null) {
+        _showLoadingIndicator('Importando...');
+        final file = File(result.files.single.path!);
+        final contents = await file.readAsString();
+        
+        final Map<String, dynamic> passwordsMap = json.decode(contents);
+        
+        Map<String, PasswordEntry> newPasswords = {};
+        passwordsMap.forEach((key, value) {
+          try {
+            newPasswords[key] = PasswordEntry.fromJson(value);
+          } catch (e) {
+            throw Exception('Formato de archivo inválido');
+          }
+        });
+        
+        bool? shouldImport = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text('Confirmar importación'),
+            content: Text('Se encontraron ${newPasswords.length} contraseñas. ¿Deseas importarlas? Esto reemplazará todas las contraseñas actuales.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Cancelar')),
+              TextButton(onPressed: () => Navigator.pop(context, true), child: Text('Importar')),
+            ],
+          ),
+        );
+        
+        if (shouldImport == true) {
+          setState(() {
+            _passwords = newPasswords;
+            _filterPasswords();
+          });
+          
+          await _savePasswords();
+          _showSnackBar('${newPasswords.length} contraseñas importadas correctamente', Colors.green);
+        }
+      }
+    } catch (e) {
+      _showSnackBar('Error al importar: ${e.toString()}', Colors.red);
+    } finally {
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+    }
+  }
+
+  void _savePassword() async {
+    String app = _appController.text.trim();
+    String password = _passwordController.text.trim();
+    
+    if (app.isEmpty || password.isEmpty) {
+      _showSnackBar('Por favor, completa todos los campos', Colors.red);
+      return;
+    }
+    
+    DateTime now = DateTime.now();
+    String appKey = app.toLowerCase();
+    
+    setState(() {
+      if (_editingApp != null) {
+        String oldKey = _editingApp!.toLowerCase();
+        if (oldKey != appKey) {
+            _passwords.remove(oldKey);
+        }
+        _passwords[appKey] = PasswordEntry(
+          app: app,
+          password: password,
+          createdAt: _passwords[oldKey]?.createdAt ?? now,
+          lastModified: now,
+        );
+      } else {
+        _passwords[appKey] = PasswordEntry(
+          app: app,
+          password: password,
+          createdAt: now,
+        );
+      }
+      _editingApp = null;
+      _filterPasswords();
+    });
+    
+    _appController.clear();
+    _passwordController.clear();
+    FocusScope.of(context).unfocus();
+    
+    await _savePasswords();
+    _showSnackBar('Contraseña guardada exitosamente', Colors.green);
+  }
+
+  void _editPassword(String appKey) {
+    setState(() {
+      _editingApp = appKey;
+      _appController.text = _passwords[appKey]!.app;
+      _passwordController.text = _passwords[appKey]!.password;
+      _passwordFocusNode.requestFocus();
+    });
+  }
+
+  void _cancelEdit() {
+    setState(() {
+      _editingApp = null;
+      _appController.clear();
+      _passwordController.clear();
+      FocusScope.of(context).unfocus();
+    });
+  }
+
+  void _deletePassword(String appKey) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Confirmar eliminación'),
+          content: Text('¿Estás seguro de que quieres eliminar la contraseña de "${_passwords[appKey]!.app}"?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () async {
+                setState(() {
+                  _passwords.remove(appKey);
+                  _visiblePasswords.remove(appKey);
+                  _filterPasswords();
+                });
+                await _savePasswords();
+                Navigator.of(context).pop();
+                _showSnackBar('Contraseña eliminada', Colors.orange);
+              },
+              child: Text('Eliminar', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _togglePasswordVisibility(String appKey) {
+    setState(() {
+      if (_visiblePasswords.contains(appKey)) {
+        _visiblePasswords.remove(appKey);
+      } else {
+        _visiblePasswords.add(appKey);
+      }
+    });
+  }
+
+  void _copyPassword(String password) {
+    Clipboard.setData(ClipboardData(text: password));
+    _showSnackBar('Contraseña copiada al portapapeles', Colors.blue);
+  }
+
+  void _showSnackBar(String message, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        duration: Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year}';
+  }
+
+  Widget _getAvatar(String appName) {
+    final String initials = appName.isNotEmpty ? appName.substring(0, 1).toUpperCase() : '?';
+    // ✨ CAMBIO DE COLOR: Color del avatar
+    final Color color = Colors.primaries[appName.hashCode % Colors.primaries.length].shade100;
+    final Color textColor = Colors.primaries[appName.hashCode % Colors.primaries.length].shade700;
+    
+    return CircleAvatar(
+      backgroundColor: color,
+      child: Text(
+        initials,
+        style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[100],
+      appBar: AppBar(
+        title: Text('Mis Contraseñas', style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: Colors.white)),
+        // ✨ CAMBIO DE COLOR: Color de la barra de navegación
+        backgroundColor: Colors.blue[700],
+        foregroundColor: Colors.white,
+        actions: [
+          PopupMenuButton(
+            icon: Icon(Icons.more_vert),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'export',
+                child: ListTile(leading: Icon(Icons.file_upload_outlined, color: Colors.green), title: Text('Exportar')),
+              ),
+              PopupMenuItem(
+                value: 'import',
+                child: ListTile(leading: Icon(Icons.file_download_outlined, color: Colors.orange), title: Text('Importar')),
+              ),
+            ],
+            onSelected: (value) {
+              if (value == 'export') _exportPasswords();
+              else if (value == 'import') _importPasswords();
+            },
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Container(
+            padding: EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.only(
+                bottomLeft: Radius.circular(30),
+                bottomRight: Radius.circular(30),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  spreadRadius: 2,
+                  blurRadius: 10,
+                  offset: Offset(0, 4),
+                )
+              ]
+            ),
+            child: Column(
+              children: [
+                TextField(
+                  controller: _appController,
+                  decoration: InputDecoration(
+                    labelText: 'Nombre de la App o Servicio',
+                    prefixIcon: Icon(Icons.apps_outlined),
+                    filled: true,
+                    fillColor: Colors.grey[100],
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+                SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _passwordController,
+                        focusNode: _passwordFocusNode,
+                        obscureText: true,
+                        decoration: InputDecoration(
+                          labelText: 'Contraseña',
+                          prefixIcon: Icon(Icons.lock_outline),
+                          filled: true,
+                          fillColor: Colors.grey[100],
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(15),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 10),
+                    IconButton(
+                      onPressed: _showPasswordGenerator,
+                      icon: Icon(Icons.auto_awesome),
+                      tooltip: 'Generar contraseña',
+                      // ✨ CAMBIO DE COLOR: Botón del generador de contraseñas
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.blue[50],
+                        foregroundColor: Colors.blue[600],
+                        padding: EdgeInsets.all(12),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 15),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          // ✨ CAMBIO DE COLOR: Gradiente del botón principal
+                          gradient: LinearGradient(
+                            colors: _editingApp == null 
+                                ? [Colors.blue[700]!, Colors.lightBlueAccent.shade400]
+                                : [Colors.orange.shade600, Colors.orange.shade400],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        child: ElevatedButton.icon(
+                          onPressed: _savePassword,
+                          icon: Icon(_editingApp == null ? Icons.save_outlined : Icons.edit_outlined, size: 24, color: Colors.white),
+                          label: Text(
+                            _editingApp == null ? 'Guardar' : 'Actualizar',
+                            style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            padding: EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (_editingApp != null) ...[
+                      SizedBox(width: 10),
+                      ElevatedButton.icon(
+                        onPressed: _cancelEdit,
+                        icon: Icon(Icons.cancel_outlined),
+                        label: Text('Cancelar'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.grey[300],
+                          foregroundColor: Colors.black54,
+                          padding: EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          
+          if (_passwords.isNotEmpty) ...[
+            Padding(
+              padding: EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Buscar por nombre...',
+                  prefixIcon: Icon(Icons.search),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: Icon(Icons.clear),
+                          onPressed: () {
+                            _searchController.clear();
+                            _filterPasswords();
+                          },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(15),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+          ],
+          
+          Expanded(
+            child: _filteredApps.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.shield_moon_outlined, size: 100, color: Colors.grey[400]),
+                        SizedBox(height: 20),
+                        Text(
+                          '¡Bienvenido!',
+                          style: GoogleFonts.inter(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.grey[700]),
+                        ),
+                        SizedBox(height: 10),
+                        Text(
+                          'Aún no tienes contraseñas guardadas.\n¡Agrega la primera para empezar a protegerte! 🚀',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    padding: EdgeInsets.all(16.0),
+                    itemCount: _filteredApps.length,
+                    itemBuilder: (context, index) {
+                      String appKey = _filteredApps[index];
+                      PasswordEntry entry = _passwords[appKey]!;
+                      bool isVisible = _visiblePasswords.contains(appKey);
+                      
+                      return Card(
+                        elevation: 4,
+                        shadowColor: Colors.black.withOpacity(0.1),
+                        margin: EdgeInsets.only(bottom: 12),
+                        // ✨ CAMBIO DE COLOR: Color alterno (efecto cebra)
+                        color: index.isEven ? Colors.white : Colors.blue.shade50,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15.0),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: ListTile(
+                            leading: _getAvatar(entry.app),
+                            title: Text(entry.app, style: TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: AnimatedSwitcher(
+                                        duration: const Duration(milliseconds: 300),
+                                        transitionBuilder: (child, animation) {
+                                          return FadeTransition(opacity: animation, child: child);
+                                        },
+                                        child: Text(
+                                          isVisible ? entry.password : '•' * 10,
+                                          key: ValueKey<bool>(isVisible),
+                                          style: GoogleFonts.sourceCodePro(
+                                            fontSize: 15,
+                                            color: isVisible ? Colors.black87 : Colors.grey.shade600
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      icon: Icon(isVisible ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+                                      onPressed: () => _togglePasswordVisibility(appKey),
+                                    ),
+                                  ],
+                                ),
+                                Text(
+                                  'Creado: ${_formatDate(entry.createdAt)}',
+                                  style: GoogleFonts.lato(fontSize: 12, color: Colors.grey[600]),
+                                ),
+                              ],
+                            ),
+                            trailing: PopupMenuButton(
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                              itemBuilder: (context) => [
+                                PopupMenuItem(
+                                  value: 'copy',
+                                  child: ListTile(leading: Icon(Icons.copy_outlined, color: Colors.blue), title: Text('Copiar')),
+                                ),
+                                PopupMenuItem(
+                                  value: 'edit',
+                                  child: ListTile(leading: Icon(Icons.edit_outlined, color: Colors.orange), title: Text('Editar')),
+                                ),
+                                PopupMenuItem(
+                                  value: 'delete',
+                                  child: ListTile(leading: Icon(Icons.delete_outline, color: Colors.red), title: Text('Eliminar')),
+                                ),
+                              ],
+                              onSelected: (value) {
+                                switch (value) {
+                                  case 'copy':
+                                    _copyPassword(entry.password);
+                                    break;
+                                  case 'edit':
+                                    _editPassword(appKey);
+                                    break;
+                                  case 'delete':
+                                    _deletePassword(appKey);
+                                    break;
+                                }
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
