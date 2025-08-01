@@ -32,6 +32,12 @@ We regularly add new samples to this repository. You can find a list of all the 
 The app will open with the samples list screen that allows you to navigate throughout the different
 categories and available samples.
 
+## For build
+into the terminal:
+1. flutter clean
+2. flutter pub get
+3. flutter build apk
+
 > **Note:** the `app` module is required to bring together all the samples but it's not relevant
 > for their functionality, you can simply ignore it. The wiring is done under the hood and an
 > implementation detail not needed to understand any sample functionality.
