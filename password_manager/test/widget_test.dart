@@ -7,7 +7,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:password_manager_v2/main.dart';
+import 'package:password_manager/main.dart';
 
 void main() {
   testWidgets('La app muestra el título en la pantalla de autenticación', (WidgetTester tester) async {

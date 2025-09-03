@@ -1,4 +1,4 @@
-package com.example.password_manager_v2
+package com.example.password_manager
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 

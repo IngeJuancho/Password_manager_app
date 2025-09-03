@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.password_manager_v2"
+    namespace = "com.example.password_manager"
     compileSdk = flutter.compileSdkVersion
 
     // Aquí se corrige la versión del NDK
@@ -23,11 +23,11 @@ android {
 
     defaultConfig {
         // Application ID
-        applicationId = "com.example.password_manager_v2"
+        applicationId = "com.example.password_manager"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = 5
-        versionName = "2.2"
+        versionCode = 8
+        versionName = "2.4"
     }
 
     buildTypes {

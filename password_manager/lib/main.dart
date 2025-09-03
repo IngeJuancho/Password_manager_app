@@ -6,9 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 void main() async {
@@ -22,8 +20,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Gestor de Contraseñas Pro',
-      // ✨ CAMBIO DE COLOR: Tema principal cambiado a azul
+      title: 'Gestor de Contraseñas',
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
@@ -97,7 +94,6 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        // ✨ CAMBIO DE COLOR: Gradiente de la pantalla de autenticación
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
@@ -112,7 +108,7 @@ class _AuthScreenState extends State<AuthScreen> {
               Icon(Icons.security, size: 120, color: Colors.white),
               SizedBox(height: 30),
               Text(
-                'Gestor de Contraseñas Pro',
+                'Gestor de Contraseñas',
                 style: GoogleFonts.inter(
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
@@ -143,7 +139,6 @@ class _AuthScreenState extends State<AuthScreen> {
                   label: Text('Autenticarse'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.white,
-                    // ✨ CAMBIO DE COLOR: Texto del botón de autenticación
                     foregroundColor: Colors.blue[800],
                     padding: EdgeInsets.symmetric(horizontal: 40, vertical: 15),
                     shape: RoundedRectangleBorder(
@@ -186,10 +181,105 @@ class PasswordEntry {
       app: json['app'],
       password: json['password'],
       createdAt: DateTime.parse(json['createdAt']),
-      lastModified: json['lastModified'] != null 
+      lastModified: json['lastModified'] != null
           ? DateTime.parse(json['lastModified'])
           : null,
     );
+  }
+}
+
+enum PasswordStrength {
+  muyDebil,
+  debil,
+  media,
+  fuerte,
+  muyFuerte
+}
+
+class PasswordStrengthAnalyzer {
+  static PasswordStrength analyzePassword(String password) {
+    if (password.isEmpty) return PasswordStrength.muyDebil;
+    
+    int score = 0;
+    
+    // Longitud
+    if (password.length >= 8) score += 1;
+    if (password.length >= 12) score += 1;
+    if (password.length >= 16) score += 1;
+    
+    // Caracteres en mayúsculas
+    if (password.contains(RegExp(r'[A-Z]'))) score += 1;
+    
+    // Caracteres en minúsculas
+    if (password.contains(RegExp(r'[a-z]'))) score += 1;
+    
+    // Números
+    if (password.contains(RegExp(r'[0-9]'))) score += 1;
+    
+    // Símbolos especiales
+    if (password.contains(RegExp(r'[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]'))) score += 1;
+    
+    // Caracteres especiales adicionales
+    if (password.contains(RegExp(r'[~`]'))) score += 1;
+    
+    // Penalización por patrones comunes
+    if (password.contains(RegExp(r'(.)\1{2,}'))) score -= 1; // Caracteres repetidos
+    if (password.contains(RegExp(r'(123|abc|qwe|asd|zxc)'))) score -= 1; // Secuencias comunes
+    
+    // Penalización por contraseñas muy comunes
+    List<String> commonPasswords = ['password', '123456', '123456789', 'qwerty', 'abc123'];
+    if (commonPasswords.contains(password.toLowerCase())) score -= 2;
+    
+    if (score <= 1) return PasswordStrength.muyDebil;
+    if (score <= 2) return PasswordStrength.debil;
+    if (score <= 4) return PasswordStrength.media;
+    if (score <= 6) return PasswordStrength.fuerte;
+    return PasswordStrength.muyFuerte;
+  }
+  
+  static String getStrengthText(PasswordStrength strength) {
+    switch (strength) {
+      case PasswordStrength.muyDebil:
+        return 'Muy Débil';
+      case PasswordStrength.debil:
+        return 'Débil';
+      case PasswordStrength.media:
+        return 'Media';
+      case PasswordStrength.fuerte:
+        return 'Fuerte';
+      case PasswordStrength.muyFuerte:
+        return 'Muy Fuerte';
+    }
+  }
+  
+  static Color getStrengthColor(PasswordStrength strength) {
+    switch (strength) {
+      case PasswordStrength.muyDebil:
+        return Colors.red;
+      case PasswordStrength.debil:
+        return Colors.orange;
+      case PasswordStrength.media:
+        return Colors.yellow[700]!;
+      case PasswordStrength.fuerte:
+        return Colors.lightGreen;
+      case PasswordStrength.muyFuerte:
+        return Colors.green;
+    }
+  }
+  
+  static IconData getStrengthIcon(PasswordStrength strength) {
+    switch (strength) {
+      case PasswordStrength.muyDebil:
+        return Icons.warning;
+      case PasswordStrength.debil:
+        return Icons.warning_amber;
+      case PasswordStrength.media:
+        return Icons.info;
+      case PasswordStrength.fuerte:
+        return Icons.check_circle;
+      case PasswordStrength.muyFuerte:
+        return Icons.verified;
+    }
   }
 }
 
@@ -210,13 +300,21 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
   final FocusNode _passwordFocusNode = FocusNode();
   String? _editingApp;
   
+  // Variable de estado para controlar la visibilidad del campo de texto
+  bool _isPasswordObscured = true;
+  
+  // Variables para el tema
+  bool _isDarkMode = false;
+
   static const String _storageKey = 'encrypted_passwords';
   static const String _encryptionKey = 'my_secure_key_2024';
+  static const String _themeKey = 'is_dark_mode';
 
   @override
   void initState() {
     super.initState();
     _loadPasswords();
+    _loadThemePreference();
     _searchController.addListener(_filterPasswords);
   }
 
@@ -268,6 +366,36 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
     }
   }
 
+  Future<void> _loadThemePreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _isDarkMode = prefs.getBool(_themeKey) ?? false;
+      });
+    } catch (e) {
+      // Si hay error, usar tema claro por defecto
+      setState(() {
+        _isDarkMode = false;
+      });
+    }
+  }
+
+  Future<void> _saveThemePreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_themeKey, _isDarkMode);
+    } catch (e) {
+      _showSnackBar('Error al guardar preferencia de tema', Colors.red);
+    }
+  }
+
+  void _toggleTheme() {
+    setState(() {
+      _isDarkMode = !_isDarkMode;
+    });
+    _saveThemePreference();
+  }
+
   Future<void> _savePasswords() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -313,7 +441,7 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
     if (includeUppercase) charset += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
     if (includeLowercase) charset += 'abcdefghijklmnopqrstuvwxyz';
     if (includeNumbers) charset += '0123456789';
-    if (includeSymbols) charset += '!@#\$%^&*()_+-=[]{}|;:,.<>?';
+    if (includeSymbols) charset += r'!@#$%^&*()_+-=[]{}|;:,.<>?';
     
     if (charset.isEmpty) return '';
     
@@ -655,7 +783,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
 
   Widget _getAvatar(String appName) {
     final String initials = appName.isNotEmpty ? appName.substring(0, 1).toUpperCase() : '?';
-    // ✨ CAMBIO DE COLOR: Color del avatar
     final Color color = Colors.primaries[appName.hashCode % Colors.primaries.length].shade100;
     final Color textColor = Colors.primaries[appName.hashCode % Colors.primaries.length].shade700;
     
@@ -668,16 +795,53 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
     );
   }
 
+  Widget _buildPasswordStrengthIndicator(String password) {
+    final strength = PasswordStrengthAnalyzer.analyzePassword(password);
+    final color = PasswordStrengthAnalyzer.getStrengthColor(strength);
+    final text = PasswordStrengthAnalyzer.getStrengthText(strength);
+    final icon = PasswordStrengthAnalyzer.getStrengthIcon(strength);
+    
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.3), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: color),
+          SizedBox(width: 6),
+          Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey[100],
+    return Theme(
+      data: _isDarkMode ? ThemeData.dark() : ThemeData.light(),
+      child: Scaffold(
+        backgroundColor: _isDarkMode ? Colors.grey[900] : Colors.grey[100],
       appBar: AppBar(
         title: Text('Mis Contraseñas', style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: Colors.white)),
-        // ✨ CAMBIO DE COLOR: Color de la barra de navegación
         backgroundColor: Colors.blue[700],
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: Icon(_isDarkMode ? Icons.light_mode : Icons.dark_mode),
+            onPressed: _toggleTheme,
+            tooltip: _isDarkMode ? 'Modo Claro' : 'Modo Oscuro',
+          ),
           PopupMenuButton(
             icon: Icon(Icons.more_vert),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -692,8 +856,9 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
               ),
             ],
             onSelected: (value) {
-              if (value == 'export') _exportPasswords();
-              else if (value == 'import') _importPasswords();
+              if (value == 'export') {
+                _exportPasswords();
+              } else if (value == 'import') _importPasswords();
             },
           ),
         ],
@@ -703,14 +868,14 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
           Container(
             padding: EdgeInsets.all(16.0),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: _isDarkMode ? Colors.grey[800] : Colors.white,
               borderRadius: BorderRadius.only(
                 bottomLeft: Radius.circular(30),
                 bottomRight: Radius.circular(30),
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withOpacity(_isDarkMode ? 0.3 : 0.05),
                   spreadRadius: 2,
                   blurRadius: 10,
                   offset: Offset(0, 4),
@@ -721,11 +886,13 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
               children: [
                 TextField(
                   controller: _appController,
+                  style: TextStyle(color: _isDarkMode ? Colors.white : Colors.black),
                   decoration: InputDecoration(
                     labelText: 'Nombre de la App o Servicio',
-                    prefixIcon: Icon(Icons.apps_outlined),
+                    labelStyle: TextStyle(color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
+                    prefixIcon: Icon(Icons.apps_outlined, color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
                     filled: true,
-                    fillColor: Colors.grey[100],
+                    fillColor: _isDarkMode ? Colors.grey[700] : Colors.grey[100],
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(15),
                       borderSide: BorderSide.none,
@@ -736,20 +903,44 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                 Row(
                   children: [
                     Expanded(
-                      child: TextField(
-                        controller: _passwordController,
-                        focusNode: _passwordFocusNode,
-                        obscureText: true,
-                        decoration: InputDecoration(
-                          labelText: 'Contraseña',
-                          prefixIcon: Icon(Icons.lock_outline),
-                          filled: true,
-                          fillColor: Colors.grey[100],
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(15),
-                            borderSide: BorderSide.none,
+                      child: Column(
+                        children: [
+                          TextField(
+                            controller: _passwordController,
+                            focusNode: _passwordFocusNode,
+                            obscureText: _isPasswordObscured, // Usa la variable
+                            onChanged: (value) => setState(() {}), // Para actualizar el indicador
+                            style: TextStyle(color: _isDarkMode ? Colors.white : Colors.black),
+                            decoration: InputDecoration(
+                              labelText: 'Contraseña',
+                              labelStyle: TextStyle(color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
+                              prefixIcon: Icon(Icons.lock_outline, color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
+                              // Se añade el icono para mostrar/ocultar
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _isPasswordObscured ? Icons.visibility : Icons.visibility_off,
+                                  color: _isDarkMode ? Colors.grey[300] : Colors.grey[600],
+                                ),
+                                onPressed: () {
+                                  setState(() {
+                                    _isPasswordObscured = !_isPasswordObscured;
+                                  });
+                                },
+                              ),
+                              filled: true,
+                              fillColor: _isDarkMode ? Colors.grey[700] : Colors.grey[100],
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(15),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
                           ),
-                        ),
+                          // Indicador de fortaleza de contraseña
+                          if (_passwordController.text.isNotEmpty) ...[
+                            SizedBox(height: 8),
+                            _buildPasswordStrengthIndicator(_passwordController.text),
+                          ],
+                        ],
                       ),
                     ),
                     SizedBox(width: 10),
@@ -757,7 +948,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                       onPressed: _showPasswordGenerator,
                       icon: Icon(Icons.auto_awesome),
                       tooltip: 'Generar contraseña',
-                      // ✨ CAMBIO DE COLOR: Botón del generador de contraseñas
                       style: IconButton.styleFrom(
                         backgroundColor: Colors.blue[50],
                         foregroundColor: Colors.blue[600],
@@ -772,7 +962,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                     Expanded(
                       child: Container(
                         decoration: BoxDecoration(
-                          // ✨ CAMBIO DE COLOR: Gradiente del botón principal
                           gradient: LinearGradient(
                             colors: _editingApp == null 
                                 ? [Colors.blue[700]!, Colors.lightBlueAccent.shade400]
@@ -823,12 +1012,14 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
               padding: EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
               child: TextField(
                 controller: _searchController,
+                style: TextStyle(color: _isDarkMode ? Colors.white : Colors.black),
                 decoration: InputDecoration(
                   hintText: 'Buscar por nombre...',
-                  prefixIcon: Icon(Icons.search),
+                  hintStyle: TextStyle(color: _isDarkMode ? Colors.grey[400] : Colors.grey[600]),
+                  prefixIcon: Icon(Icons.search, color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
                   suffixIcon: _searchController.text.isNotEmpty
                       ? IconButton(
-                          icon: Icon(Icons.clear),
+                          icon: Icon(Icons.clear, color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
                           onPressed: () {
                             _searchController.clear();
                             _filterPasswords();
@@ -836,7 +1027,7 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                         )
                       : null,
                   filled: true,
-                  fillColor: Colors.white,
+                  fillColor: _isDarkMode ? Colors.grey[800] : Colors.white,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(15),
                     borderSide: BorderSide.none,
@@ -852,17 +1043,17 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.shield_moon_outlined, size: 100, color: Colors.grey[400]),
+                        Icon(Icons.shield_moon_outlined, size: 100, color: _isDarkMode ? Colors.grey[600] : Colors.grey[400]),
                         SizedBox(height: 20),
                         Text(
                           '¡Bienvenido!',
-                          style: GoogleFonts.inter(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.grey[700]),
+                          style: GoogleFonts.inter(fontSize: 22, fontWeight: FontWeight.bold, color: _isDarkMode ? Colors.grey[200] : Colors.grey[700]),
                         ),
                         SizedBox(height: 10),
                         Text(
                           'Aún no tienes contraseñas guardadas.\n¡Agrega la primera para empezar a protegerte! 🚀',
                           textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                          style: TextStyle(fontSize: 16, color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
                         ),
                       ],
                     ),
@@ -877,10 +1068,11 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                       
                       return Card(
                         elevation: 4,
-                        shadowColor: Colors.black.withOpacity(0.1),
+                        shadowColor: Colors.black.withOpacity(_isDarkMode ? 0.3 : 0.1),
                         margin: EdgeInsets.only(bottom: 12),
-                        // ✨ CAMBIO DE COLOR: Color alterno (efecto cebra)
-                        color: index.isEven ? Colors.white : Colors.blue.shade50,
+                        color: _isDarkMode 
+                            ? (index.isEven ? Colors.grey[800] : Colors.grey[750])
+                            : (index.isEven ? Colors.white : Colors.blue.shade50),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(15.0),
                         ),
@@ -888,7 +1080,7 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                           padding: const EdgeInsets.symmetric(vertical: 8.0),
                           child: ListTile(
                             leading: _getAvatar(entry.app),
-                            title: Text(entry.app, style: TextStyle(fontWeight: FontWeight.bold)),
+                            title: Text(entry.app, style: TextStyle(fontWeight: FontWeight.bold, color: _isDarkMode ? Colors.white : Colors.black)),
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -914,25 +1106,41 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                                     IconButton(
                                       icon: Icon(isVisible ? Icons.visibility_off_outlined : Icons.visibility_outlined),
                                       onPressed: () => _togglePasswordVisibility(appKey),
+                                      tooltip: isVisible ? 'Ocultar' : 'Mostrar',
+                                      iconSize: 20,
+                                      color: _isDarkMode ? Colors.grey[300] : Colors.grey[600],
+                                    ),
+                                    IconButton(
+                                      icon: Icon(Icons.copy_outlined),
+                                      onPressed: () => _copyPassword(entry.password),
+                                      tooltip: 'Copiar',
+                                      iconSize: 20,
+                                      color: _isDarkMode ? Colors.grey[300] : Colors.grey[600],
                                     ),
                                   ],
                                 ),
-                                Text(
-                                  'Creado: ${_formatDate(entry.createdAt)}',
-                                  style: GoogleFonts.lato(fontSize: 12, color: Colors.grey[600]),
+                                SizedBox(height: 5),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      entry.lastModified != null 
+                                        ? 'Mod: ${_formatDate(entry.lastModified!)}'
+                                        : 'Creado: ${_formatDate(entry.createdAt)}',
+                                      style: TextStyle(fontSize: 12, color: _isDarkMode ? Colors.grey[400] : Colors.grey[500]),
+                                    ),
+                                    _buildPasswordStrengthIndicator(entry.password),
+                                  ],
                                 ),
                               ],
                             ),
                             trailing: PopupMenuButton(
+                              icon: Icon(Icons.more_horiz),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                               itemBuilder: (context) => [
                                 PopupMenuItem(
-                                  value: 'copy',
-                                  child: ListTile(leading: Icon(Icons.copy_outlined, color: Colors.blue), title: Text('Copiar')),
-                                ),
-                                PopupMenuItem(
                                   value: 'edit',
-                                  child: ListTile(leading: Icon(Icons.edit_outlined, color: Colors.orange), title: Text('Editar')),
+                                  child: ListTile(leading: Icon(Icons.edit_outlined, color: Colors.blue), title: Text('Editar')),
                                 ),
                                 PopupMenuItem(
                                   value: 'delete',
@@ -940,16 +1148,10 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                                 ),
                               ],
                               onSelected: (value) {
-                                switch (value) {
-                                  case 'copy':
-                                    _copyPassword(entry.password);
-                                    break;
-                                  case 'edit':
-                                    _editPassword(appKey);
-                                    break;
-                                  case 'delete':
-                                    _deletePassword(appKey);
-                                    break;
+                                if (value == 'edit') {
+                                  _editPassword(appKey);
+                                } else if (value == 'delete') {
+                                  _deletePassword(appKey);
                                 }
                               },
                             ),
@@ -960,6 +1162,7 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                   ),
           ),
         ],
+      ),
       ),
     );
   }
