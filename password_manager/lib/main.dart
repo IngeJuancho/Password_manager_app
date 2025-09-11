@@ -1,3 +1,4 @@
+// Imports (sin cambios)
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,6 +34,9 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// --- INICIO: AuthScreen ACTUALIZADA ---
+// Se reemplazó la clase anterior con la nueva versión que proporcionaste.
+
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
 
@@ -40,21 +44,50 @@ class AuthScreen extends StatefulWidget {
   _AuthScreenState createState() => _AuthScreenState();
 }
 
-class _AuthScreenState extends State<AuthScreen> {
+class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
   final LocalAuthentication auth = LocalAuthentication();
   bool _isAuthenticating = false;
   String _authStatus = 'Esperando autenticación...';
+  
+  // Variable de estado para controlar la animación del candado
+  bool _isUnlocked = false;
+  
+  // Controlador para animaciones adicionales
+  late AnimationController _bounceController;
+  late Animation<double> _bounceAnimation;
 
   @override
   void initState() {
     super.initState();
+    
+    // Inicializar controlador de animación de rebote
+    _bounceController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+    
+    _bounceAnimation = Tween<double>(
+      begin: 1.0,
+      end: 1.2,
+    ).animate(CurvedAnimation(
+      parent: _bounceController,
+      curve: Curves.elasticOut,
+    ));
+    
     _authenticateWithBiometrics();
+  }
+
+  @override
+  void dispose() {
+    _bounceController.dispose();
+    super.dispose();
   }
 
   Future<void> _authenticateWithBiometrics() async {
     setState(() {
       _isAuthenticating = true;
       _authStatus = 'Autenticando...';
+      _isUnlocked = false; // Asegurar que el candado esté cerrado
     });
     
     try {
@@ -67,17 +100,32 @@ class _AuthScreenState extends State<AuthScreen> {
       );
 
       if (didAuthenticate) {
+        // 1. Cambiar estado para activar animación de desbloqueo
+        setState(() {
+          _isUnlocked = true;
+          _authStatus = '¡Acceso concedido!';
+          _isAuthenticating = false;
+        });
+
+        // 2. Activar animación de rebote
+        _bounceController.forward();
+
+        // 3. Pausa para ver la animación antes de navegar
+        await Future.delayed(const Duration(milliseconds: 1200));
         _navigateToHome();
+
       } else {
         setState(() {
           _isAuthenticating = false;
           _authStatus = 'Autenticación fallida. Intenta nuevamente.';
+          _isUnlocked = false; // Mantener el candado cerrado
         });
       }
     } catch (e) {
       setState(() {
         _isAuthenticating = false;
         _authStatus = 'Error de autenticación. Intenta nuevamente.';
+        _isUnlocked = false; // Mantener el candado cerrado en caso de error
       });
     }
   }
@@ -86,7 +134,14 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (context) => PasswordManagerHome()),
+      // Transición suave a la siguiente pantalla
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) => PasswordManagerHome(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+        transitionDuration: const Duration(milliseconds: 500),
+      )
     );
   }
 
@@ -105,7 +160,61 @@ class _AuthScreenState extends State<AuthScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.security, size: 120, color: Colors.white),
+              // Widget de animación del candado con efecto de rebote
+              AnimatedBuilder(
+                animation: _bounceAnimation,
+                builder: (context, child) {
+                  return Transform.scale(
+                    scale: _bounceAnimation.value,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 500),
+                      transitionBuilder: (Widget child, Animation<double> animation) {
+                        return ScaleTransition(
+                          scale: animation,
+                          child: RotationTransition(
+                            turns: Tween<double>(
+                              begin: 0.0,
+                              end: _isUnlocked ? 0.1 : 0.0,
+                            ).animate(animation),
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: Icon(
+                        _isUnlocked ? Icons.lock_open : Icons.lock_outline,
+                        key: ValueKey<bool>(_isUnlocked),
+                        size: 120,
+                        color: _isUnlocked ? Colors.lightGreenAccent : Colors.white,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              
+              // Animación adicional de partículas de éxito (opcional)
+              if (_isUnlocked) ...[
+                SizedBox(height: 10),
+                TweenAnimationBuilder<double>(
+                  tween: Tween<double>(begin: 0.0, end: 1.0),
+                  duration: const Duration(milliseconds: 800),
+                  builder: (context, value, child) {
+                    return Opacity(
+                      opacity: value,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.check_circle, color: Colors.lightGreenAccent, size: 30),
+                          SizedBox(width: 10),
+                          Icon(Icons.security, color: Colors.lightGreenAccent, size: 25),
+                          SizedBox(width: 10),
+                          Icon(Icons.check_circle, color: Colors.lightGreenAccent, size: 30),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+              
               SizedBox(height: 30),
               Text(
                 'Gestor de Contraseñas',
@@ -117,35 +226,100 @@ class _AuthScreenState extends State<AuthScreen> {
                 textAlign: TextAlign.center,
               ),
               SizedBox(height: 50),
-              Container(
+              
+              // Contenedor del estado con animación de color
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
                 padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.1),
+                  color: _isUnlocked 
+                      ? Colors.green.withOpacity(0.2)
+                      : Colors.white.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(10),
+                  border: _isUnlocked 
+                      ? Border.all(color: Colors.lightGreenAccent, width: 1)
+                      : null,
                 ),
-                child: Text(
-                  _authStatus,
-                  style: TextStyle(color: Colors.white, fontSize: 16),
-                  textAlign: TextAlign.center,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_isUnlocked) ...[
+                      Icon(Icons.check_circle, color: Colors.lightGreenAccent, size: 20),
+                      SizedBox(width: 8),
+                    ],
+                    Text(
+                      _authStatus,
+                      style: TextStyle(
+                        color: _isUnlocked ? Colors.lightGreenAccent : Colors.white, 
+                        fontSize: 16,
+                        fontWeight: _isUnlocked ? FontWeight.bold : FontWeight.normal,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
               ),
+              
               SizedBox(height: 30),
-              if (_isAuthenticating)
-                CircularProgressIndicator(color: Colors.white)
-              else
-                ElevatedButton.icon(
-                  onPressed: _authenticateWithBiometrics,
-                  icon: Icon(Icons.fingerprint),
-                  label: Text('Autenticarse'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.blue[800],
-                    padding: EdgeInsets.symmetric(horizontal: 40, vertical: 15),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
+              
+              // Ocultar indicadores y botón si la autenticación fue exitosa
+              if (!_isUnlocked) ...[
+                if (_isAuthenticating)
+                  Column(
+                    children: [
+                      CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 3,
+                      ),
+                      SizedBox(height: 15),
+                      Text(
+                        'Verificando identidad...',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  )
+                else
+                  ElevatedButton.icon(
+                    onPressed: _authenticateWithBiometrics,
+                    icon: Icon(Icons.fingerprint, size: 24),
+                    label: Text('Autenticarse', style: TextStyle(fontSize: 16)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.blue[800],
+                      padding: EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                      elevation: 5,
                     ),
                   ),
+              ] else ...[
+                // Mensaje de carga mientras navega
+                Column(
+                  children: [
+                    SizedBox(
+                      width: 30,
+                      height: 30,
+                      child: CircularProgressIndicator(
+                        color: Colors.lightGreenAccent,
+                        strokeWidth: 3,
+                      ),
+                    ),
+                    SizedBox(height: 15),
+                    Text(
+                      'Accediendo...',
+                      style: TextStyle(
+                        color: Colors.lightGreenAccent,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
                 ),
+              ],
             ],
           ),
         ),
@@ -153,6 +327,11 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 }
+
+// --- FIN DE AuthScreen ACTUALIZADA ---
+
+
+// --- CÓDIGO ORIGINAL SIN CAMBIOS ---
 
 class PasswordEntry {
   String app;
@@ -831,7 +1010,7 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
     return Theme(
       data: _isDarkMode ? ThemeData.dark() : ThemeData.light(),
       child: Scaffold(
-        backgroundColor: _isDarkMode ? Colors.grey[900] : Colors.grey[100],
+      backgroundColor: _isDarkMode ? Colors.grey[900] : Colors.grey[100],
       appBar: AppBar(
         title: Text('Mis Contraseñas', style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: Colors.blue[700],
@@ -1097,7 +1276,9 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                                           key: ValueKey<bool>(isVisible),
                                           style: GoogleFonts.sourceCodePro(
                                             fontSize: 15,
-                                            color: isVisible ? Colors.black87 : Colors.grey.shade600
+                                            color: isVisible 
+                                                ? (_isDarkMode ? Colors.white : Colors.black87)
+                                                : (_isDarkMode ? Colors.grey[400] : Colors.grey[600])
                                           ),
                                           overflow: TextOverflow.ellipsis,
                                         ),
@@ -1125,8 +1306,8 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                                   children: [
                                     Text(
                                       entry.lastModified != null 
-                                        ? 'Mod: ${_formatDate(entry.lastModified!)}'
-                                        : 'Creado: ${_formatDate(entry.createdAt)}',
+                                          ? 'Mod: ${_formatDate(entry.lastModified!)}'
+                                          : 'Creado: ${_formatDate(entry.createdAt)}',
                                       style: TextStyle(fontSize: 12, color: _isDarkMode ? Colors.grey[400] : Colors.grey[500]),
                                     ),
                                     _buildPasswordStrengthIndicator(entry.password),
