@@ -26,8 +26,8 @@ android {
         applicationId = "com.example.password_manager"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = 9
-        versionName = "2.5"
+        versionCode = 10
+        versionName = "2.6"
     }
 
     buildTypes {
