@@ -23,7 +23,7 @@ android {
 
     defaultConfig {
         // Application ID
-        applicationId = "com.example.password_manager"
+        applicationId = "com.password.manager"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = 10
