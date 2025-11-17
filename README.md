@@ -38,6 +38,8 @@ into the terminal:
 2. flutter pub get
 3. flutter build apk
 
+To load the application icon, run: flutter pub run flutter_launcher_icons
+
 > **Note:** the `app` module is required to bring together all the samples but it's not relevant
 > for their functionality, you can simply ignore it. The wiring is done under the hood and an
 > implementation detail not needed to understand any sample functionality.
