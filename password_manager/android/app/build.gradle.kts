@@ -27,7 +27,7 @@ android {
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = 10
-        versionName = "2.6"
+        versionName = "2.7"
     }
 
     buildTypes {
@@ -35,6 +35,22 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // --- NUEVO CÓDIGO PARA RENOMBRAR EL APK (Kotlin DSL) ---
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            // En Kotlin DSL necesitamos verificar el tipo para acceder a outputFileName
+            if (this is com.android.build.gradle.internal.api.BaseVariantOutputImpl) {
+                // Opción A: Nombre fijo
+                outputFileName = "Password Manager.apk"
+                
+                // Opción B: Nombre con versión (ej: SecureVault-v2.7.apk) - Si prefieres esta, descomenta:
+                // outputFileName = "SecureVault-v${variant.versionName}.apk"
+            }
+        }
+    }
+    // -------------------------------------------------------
 }
 
 flutter {
