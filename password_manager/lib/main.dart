@@ -11,109 +11,186 @@ import 'package:google_fonts/google_fonts.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(MyApp());
+  // Forzamos orientación vertical
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  runApp(const MyApp());
+}
+
+// Colores personalizados
+class AppColors {
+  // Light Theme
+  static const Color lightBackground = Color(0xFFF2F4F8);
+  static const Color lightSurface = Colors.white;
+  static const Color lightPrimary = Color(0xFF4F46E5); // Indigo vibrante
+  static const Color lightTextPrimary = Color(0xFF1E293B);
+  
+  // Dark Theme (True Black OLED)
+  static const Color darkBackground = Color(0xFF000000); // Negro puro
+  static const Color darkSurface = Color(0xFF141414); // Gris muy oscuro
+  static const Color darkPrimary = Color(0xFF6366F1); // Indigo suave
+  static const Color darkAccent = Color(0xFF00E5FF); // Cian eléctrico
+  static const Color darkTextPrimary = Color(0xFFF1F5F9);
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+    ));
+
     return MaterialApp(
       title: 'Gestor de Contraseñas',
+      debugShowCheckedModeBanner: false,
+      themeMode: ThemeMode.system,
       theme: ThemeData(
-        primarySwatch: Colors.blue,
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: AppColors.lightBackground,
+        primaryColor: AppColors.lightPrimary,
+        colorScheme: const ColorScheme.light(
+          primary: AppColors.lightPrimary,
+          secondary: Colors.tealAccent,
+          surface: AppColors.lightSurface,
+        ),
         useMaterial3: true,
-        textTheme: GoogleFonts.interTextTheme(
-          Theme.of(context).textTheme,
+        cardTheme: CardThemeData(
+          color: AppColors.lightSurface,
+          elevation: 2,
+          shadowColor: Colors.black.withValues(alpha: 0.05),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
+        textTheme: GoogleFonts.interTextTheme(ThemeData.light().textTheme).apply(
+          bodyColor: AppColors.lightTextPrimary,
+          displayColor: AppColors.lightTextPrimary,
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: AppColors.lightPrimary,
+          foregroundColor: Colors.white,
+          elevation: 0,
         ),
       ),
-      home: AuthScreen(),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: AppColors.darkBackground,
+        primaryColor: AppColors.darkPrimary,
+        colorScheme: const ColorScheme.dark(
+          primary: AppColors.darkPrimary,
+          secondary: AppColors.darkAccent,
+          surface: AppColors.darkSurface,
+        ),
+        useMaterial3: true,
+        cardTheme: CardThemeData(
+          color: AppColors.darkSurface,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.white.withValues(alpha: 0.1), width: 0.5),
+          ),
+        ),
+        textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme).apply(
+          bodyColor: AppColors.darkTextPrimary,
+          displayColor: AppColors.darkTextPrimary,
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: AppColors.darkSurface,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xFF1E1E1E),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide.none,
+          ),
+        ),
+      ),
+      home: const AuthScreen(),
     );
   }
 }
 
-// --- INICIO: AuthScreen ACTUALIZADA ---
+// --- PANTALLA DE AUTENTICACIÓN ---
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
 
   @override
-  _AuthScreenState createState() => _AuthScreenState();
+  State<AuthScreen> createState() => _AuthScreenState();
 }
 
 class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
   final LocalAuthentication auth = LocalAuthentication();
   bool _isAuthenticating = false;
-  String _authStatus = 'Esperando autenticación...';
-  
-  // Variable de estado para controlar la animación del candado
+  String _authStatus = 'Seguridad Biométrica';
   bool _isUnlocked = false;
-  // Controlador para animaciones adicionales
-  late AnimationController _bounceController;
-  late Animation<double> _bounceAnimation;
+
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+  late AnimationController _iconController;
+
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    )..repeat(reverse: true);
     
-    // Inicializar controlador de animación de rebote
-    _bounceController = AnimationController(
-      duration: const Duration(milliseconds: 600),
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    _iconController = AnimationController(
+      duration: const Duration(milliseconds: 500),
       vsync: this,
     );
-    _bounceAnimation = Tween<double>(
-      begin: 1.0,
-      end: 1.2,
-    ).animate(CurvedAnimation(
-      parent: _bounceController,
-      curve: Curves.elasticOut,
-    ));
-    _authenticateWithBiometrics();
+
+    Future.delayed(const Duration(milliseconds: 500), _authenticateWithBiometrics);
   }
 
   @override
   void dispose() {
-    _bounceController.dispose();
+    _pulseController.dispose();
+    _iconController.dispose();
     super.dispose();
   }
 
   Future<void> _authenticateWithBiometrics() async {
     setState(() {
       _isAuthenticating = true;
-      _authStatus = 'Autenticando...';
-      _isUnlocked = false; // Asegurar que el candado esté cerrado
+      _authStatus = 'Escaneando...';
     });
+
     try {
       final bool didAuthenticate = await auth.authenticate(
-        localizedReason: 'Autentícate para acceder a tus contraseñas',
-        options: AuthenticationOptions(
+        localizedReason: 'Verifica tu identidad para acceder',
+        options: const AuthenticationOptions(
           biometricOnly: false,
           stickyAuth: true,
         ),
       );
+
       if (didAuthenticate) {
-        // 1. Cambiar estado para activar animación de desbloqueo
         setState(() {
           _isUnlocked = true;
-          _authStatus = '¡Acceso concedido!';
+          _authStatus = 'Acceso Concedido';
           _isAuthenticating = false;
         });
-        // 2. Activar animación de rebote
-        _bounceController.forward();
-        // 3. Pausa para ver la animación antes de navegar
-        await Future.delayed(const Duration(milliseconds: 1200));
+        _iconController.forward();
+        await Future.delayed(const Duration(milliseconds: 800));
         _navigateToHome();
-
       } else {
         setState(() {
           _isAuthenticating = false;
-          _authStatus = 'Autenticación fallida. Intenta nuevamente.';
-          _isUnlocked = false; // Mantener el candado cerrado
+          _authStatus = 'Intenta nuevamente';
         });
       }
     } catch (e) {
       setState(() {
         _isAuthenticating = false;
-        _authStatus = 'Error de autenticación. Intenta nuevamente.';
-        _isUnlocked = false; // Mantener el candado cerrado en caso de error
+        _authStatus = 'Error de seguridad';
       });
     }
   }
@@ -122,14 +199,24 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
-      // Transición suave a la siguiente pantalla
       PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) => PasswordManagerHome(),
+        pageBuilder: (context, animation, secondaryAnimation) => const PasswordManagerHome(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(opacity: animation, child: child);
+          const begin = Offset(0.0, 0.05);
+          const end = Offset.zero;
+          const curve = Curves.easeOutQuint;
+          
+          // CORRECCIÓN: Usar .animate() en lugar de .chain() para CurvedAnimation
+          var curvedAnimation = CurvedAnimation(parent: animation, curve: curve);
+          var offsetAnimation = Tween(begin: begin, end: end).animate(curvedAnimation);
+
+          return FadeTransition(
+            opacity: animation,
+            child: SlideTransition(position: offsetAnimation, child: child),
+          );
         },
-        transitionDuration: const Duration(milliseconds: 500),
-      )
+        transitionDuration: const Duration(milliseconds: 800),
+      ),
     );
   }
 
@@ -137,148 +224,92 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Colors.blue[800]!, Colors.blue[400]!],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF0F172A),
+              Color(0xFF1E293B),
+              Color(0xFF334155),
+            ],
           ),
         ),
-   
-       child: Center(
+        child: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Widget de animación del candado simplificado
-              AnimatedBuilder(
-                animation: _bounceAnimation,
-                builder: (context, child) {
-                  return Transform.scale(
-                    scale: _bounceAnimation.value,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 500),
-                      transitionBuilder: (Widget child, Animation<double> animation) {
-                        return ScaleTransition(
-                          scale: animation,
-                          child: child,
-                        );
-                      },
-                      child: Icon(
-                        _isUnlocked ? Icons.lock_open : Icons.lock_outline,
-                        key: ValueKey<bool>(_isUnlocked),
-                        size: 120,
-                        color: Colors.white, // Mantiene el color blanco siempre
-                      ),
-                    ),
-                  );
-                },
+              ScaleTransition(
+                scale: _pulseAnimation,
+                child: Container(
+                  padding: const EdgeInsets.all(30),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.05),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 1),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _isUnlocked ? Colors.greenAccent.withValues(alpha: 0.3) : Colors.blueAccent.withValues(alpha: 0.2),
+                        blurRadius: 30,
+                        spreadRadius: 5,
+                      )
+                    ],
+                  ),
+                  child: AnimatedBuilder(
+                    animation: _iconController,
+                    builder: (context, child) {
+                      return Icon(
+                        _isUnlocked ? Icons.lock_open_rounded : Icons.lock_outline_rounded,
+                        size: 60,
+                        color: _isUnlocked ? Colors.greenAccent : Colors.white,
+                      );
+                    },
+                  ),
+                ),
               ),
-              
-              SizedBox(height: 30),
+              const SizedBox(height: 40),
               Text(
-                'Gestor de Contraseñas',
-                style: GoogleFonts.inter(
-                  fontSize: 28,
+                'SecureVault',
+                style: GoogleFonts.outfit(
+                  fontSize: 32,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
+                  letterSpacing: 1.5,
                 ),
-                textAlign: TextAlign.center,
               ),
-              SizedBox(height: 50),
-              
-              // Contenedor del estado con animación de color
-              AnimatedContainer(
+              const SizedBox(height: 10),
+              AnimatedSwitcher(
                 duration: const Duration(milliseconds: 300),
-                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                decoration: BoxDecoration(
-                  color: _isUnlocked 
-                      ? Colors.white.withOpacity(0.2)
-                      : Colors.white.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
-                  border: _isUnlocked 
-                      ? Border.all(color: Colors.white, width: 1)
-                      : null,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_isUnlocked) ...[
-                      Icon(Icons.check_circle, color: Colors.white, size: 20),
-                      SizedBox(width: 8),
-                    ],
-                    Text(
-                      _authStatus,
-                      style: TextStyle(
-                        color: Colors.white, 
-                        fontSize: 16,
-                        fontWeight: _isUnlocked ? FontWeight.bold : FontWeight.normal,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+                child: Text(
+                  _authStatus,
+                  key: ValueKey<String>(_authStatus),
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    color: Colors.white70,
+                    letterSpacing: 0.5,
+                  ),
                 ),
               ),
-              
-              SizedBox(height: 30),
-              
-              // Ocultar indicadores y botón si la autenticación fue exitosa
-              if (!_isUnlocked) ...[
-                if (_isAuthenticating)
-                  Column(
-                    children: [
-                      CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 3,
-                      ),
-                      SizedBox(height: 15),
-                      Text(
-                        'Verificando identidad...',
-                        style: TextStyle(
-                           color: Colors.white70,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  )
-                else
-                  ElevatedButton.icon(
-                    onPressed: _authenticateWithBiometrics,
-                    icon: Icon(Icons.fingerprint, size: 24),
-                    label: Text('Autenticarse', style: TextStyle(fontSize: 16)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.blue[800],
-                      padding: EdgeInsets.symmetric(horizontal: 40, vertical: 15),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                      elevation: 5,
-                    ),
+              const SizedBox(height: 60),
+              if (!_isUnlocked && !_isAuthenticating)
+                ElevatedButton.icon(
+                  onPressed: _authenticateWithBiometrics,
+                  icon: const Icon(Icons.fingerprint),
+                  label: const Text('Desbloquear'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFF0F172A),
+                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+                    elevation: 10,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                   ),
-              ] else ...[
-                // Mensaje de carga mientras navega
-                Column(
-                  children: [
-                    SizedBox(
-                      width: 30,
-                      height: 30,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 3,
-                      ),
-                    ),
-                    SizedBox(height: 15),
-                    Text(
-                      'Accediendo...',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
                 ),
-              ],
+               if (_isAuthenticating)
+                 const SizedBox(
+                   width: 24, 
+                   height: 24, 
+                   child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                 ),
             ],
           ),
         ),
@@ -287,11 +318,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
   }
 }
 
-// --- FIN DE AuthScreen ACTUALIZADA ---
-
-
-// --- CÓDIGO ORIGINAL SIN CAMBIOS ---
-
+// --- MODELOS ---
 class PasswordEntry {
   String app;
   String password;
@@ -304,122 +331,57 @@ class PasswordEntry {
     required this.createdAt,
     this.lastModified,
   });
-  Map<String, dynamic> toJson() {
-    return {
-      'app': app,
-      'password': password,
-      'createdAt': createdAt.toIso8601String(),
-      'lastModified': lastModified?.toIso8601String(),
-    };
-  }
+  Map<String, dynamic> toJson() => {
+    'app': app,
+    'password': password,
+    'createdAt': createdAt.toIso8601String(),
+    'lastModified': lastModified?.toIso8601String(),
+  };
 
-  factory PasswordEntry.fromJson(Map<String, dynamic> json) {
-    return PasswordEntry(
-      app: json['app'],
-      password: json['password'],
-      createdAt: DateTime.parse(json['createdAt']),
-      lastModified: json['lastModified'] != null
-          ? DateTime.parse(json['lastModified'])
-          : null,
-    );
-  }
+  factory PasswordEntry.fromJson(Map<String, dynamic> json) => PasswordEntry(
+    app: json['app'],
+    password: json['password'],
+    createdAt: DateTime.parse(json['createdAt']),
+    lastModified: json['lastModified'] != null ? DateTime.parse(json['lastModified']) : null,
+  );
 }
 
-enum PasswordStrength {
-  muyDebil,
-  debil,
-  media,
-  fuerte,
-  muyFuerte
-}
+enum PasswordStrength { muyDebil, debil, media, fuerte, muyFuerte }
 
 class PasswordStrengthAnalyzer {
   static PasswordStrength analyzePassword(String password) {
     if (password.isEmpty) return PasswordStrength.muyDebil;
     int score = 0;
-    
-    // Longitud
-    if (password.length >= 8) score += 1;
-    if (password.length >= 12) score += 1;
-    if (password.length >= 16) score += 1;
-    // Caracteres en mayúsculas
-    if (password.contains(RegExp(r'[A-Z]'))) score += 1;
-    // Caracteres en minúsculas
-    if (password.contains(RegExp(r'[a-z]'))) score += 1;
-    // Números
-    if (password.contains(RegExp(r'[0-9]'))) score += 1;
-    // Símbolos especiales
-    if (password.contains(RegExp(r'[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]'))) score += 1;
-    // Caracteres especiales adicionales
-    if (password.contains(RegExp(r'[~`]'))) score += 1;
-    // Penalización por patrones comunes
-    if (password.contains(RegExp(r'(.)\1{2,}'))) score -= 1;
-    // Caracteres repetidos
-    if (password.contains(RegExp(r'(123|abc|qwe|asd|zxc)'))) score -= 1;
-    // Secuencias comunes
-    
-    // Penalización por contraseñas muy comunes
-    List<String> commonPasswords = ['password', '123456', '123456789', 'qwerty', 'abc123'];
-    if (commonPasswords.contains(password.toLowerCase())) score -= 2;
-    
+    if (password.length >= 8) score++;
+    if (password.length >= 12) score++;
+    if (password.contains(RegExp(r'[A-Z]'))) score++;
+    if (password.contains(RegExp(r'[a-z]'))) score++;
+    if (password.contains(RegExp(r'[0-9]'))) score++;
+    if (password.contains(RegExp(r'[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]'))) score++;
     if (score <= 1) return PasswordStrength.muyDebil;
     if (score <= 2) return PasswordStrength.debil;
     if (score <= 4) return PasswordStrength.media;
-    if (score <= 6) return PasswordStrength.fuerte;
+    if (score <= 5) return PasswordStrength.fuerte;
     return PasswordStrength.muyFuerte;
-  }
-  
-  static String getStrengthText(PasswordStrength strength) {
-    switch (strength) {
-      case PasswordStrength.muyDebil:
-        return 'Muy Débil';
-      case PasswordStrength.debil:
-        return 'Débil';
-      case PasswordStrength.media:
-        return 'Media';
-      case PasswordStrength.fuerte:
-        return 'Fuerte';
-      case PasswordStrength.muyFuerte:
-        return 'Muy Fuerte';
-    }
   }
   
   static Color getStrengthColor(PasswordStrength strength) {
     switch (strength) {
-      case PasswordStrength.muyDebil:
-        return Colors.red;
-      case PasswordStrength.debil:
-        return Colors.orange;
-      case PasswordStrength.media:
-        return Colors.yellow[700]!;
-      case PasswordStrength.fuerte:
-        return Colors.lightGreen;
-      case PasswordStrength.muyFuerte:
-        return Colors.green;
-    }
-  }
-  
-  static IconData getStrengthIcon(PasswordStrength strength) {
-    switch (strength) {
-      case PasswordStrength.muyDebil:
-        return Icons.warning;
-      case PasswordStrength.debil:
-        return Icons.warning_amber;
-      case PasswordStrength.media:
-        return Icons.info;
-      case PasswordStrength.fuerte:
-        return Icons.check_circle;
-      case PasswordStrength.muyFuerte:
-        return Icons.verified;
+      case PasswordStrength.muyDebil: return Colors.redAccent;
+      case PasswordStrength.debil: return Colors.orangeAccent;
+      case PasswordStrength.media: return Colors.yellowAccent;
+      case PasswordStrength.fuerte: return Colors.lightGreenAccent;
+      case PasswordStrength.muyFuerte: return Colors.greenAccent;
     }
   }
 }
 
+// --- HOME SCREEN ---
 class PasswordManagerHome extends StatefulWidget {
   const PasswordManagerHome({super.key});
 
   @override
-  _PasswordManagerHomeState createState() => _PasswordManagerHomeState();
+  State<PasswordManagerHome> createState() => _PasswordManagerHomeState();
 }
 
 class _PasswordManagerHomeState extends State<PasswordManagerHome> {
@@ -429,22 +391,21 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
   final TextEditingController _appController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
-  final FocusNode _passwordFocusNode = FocusNode();
   String? _editingApp;
   
-  // Variable de estado para controlar la visibilidad del campo de texto
   bool _isPasswordObscured = true;
-  // Variables para el tema
   bool _isDarkMode = false;
 
   static const String _storageKey = 'encrypted_passwords';
-  static const String _encryptionKey = 'my_secure_key_2024';
+  // NOTA IMPORTANTE: Para producción, usar flutter_secure_storage para la llave
+  static const String _encryptionKey = 'my_secure_key_2024'; 
   static const String _themeKey = 'is_dark_mode';
+
   @override
   void initState() {
     super.initState();
-    _loadPasswords();
     _loadThemePreference();
+    _loadPasswords();
     _searchController.addListener(_filterPasswords);
   }
 
@@ -453,7 +414,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
     _appController.dispose();
     _passwordController.dispose();
     _searchController.dispose();
-    _passwordFocusNode.dispose();
     super.dispose();
   }
 
@@ -463,9 +423,7 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
       if (query.isEmpty) {
         _filteredApps = _passwords.keys.toList();
       } else {
-        _filteredApps = _passwords.keys
-            .where((app) => _passwords[app]!.app.toLowerCase().contains(query))
-            .toList();
+        _filteredApps = _passwords.keys.where((app) => _passwords[app]!.app.toLowerCase().contains(query)).toList();
       }
       _filteredApps.sort((a, b) => a.compareTo(b));
     });
@@ -475,254 +433,61 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final passwordsData = prefs.getString(_storageKey);
-      
       if (passwordsData != null) {
         final decryptedData = _decrypt(passwordsData);
         final Map<String, dynamic> passwordsMap = json.decode(decryptedData);
-        
         if (mounted) {
           setState(() {
-            _passwords = Map.from(passwordsMap.map((key, value) =>
-              MapEntry(key, PasswordEntry.fromJson(value))
-            ));
+            _passwords = Map.from(passwordsMap.map((key, value) => MapEntry(key, PasswordEntry.fromJson(value))));
             _filterPasswords();
           });
         }
       }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar('Error al cargar las contraseñas', Colors.red);
-      }
-    }
+    } catch (e) { /* Error silencioso */ }
   }
 
   Future<void> _loadThemePreference() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      setState(() {
-        _isDarkMode = prefs.getBool(_themeKey) ?? false;
-      });
-    } catch (e) {
-      // Si hay error, usar tema claro por defecto
-      setState(() {
-        _isDarkMode = false;
-      });
-    }
-  }
-
-  Future<void> _saveThemePreference() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_themeKey, _isDarkMode);
-    } catch (e) {
-      _showSnackBar('Error al guardar preferencia de tema', Colors.red);
-    }
-  }
-
-  void _toggleTheme() {
+    final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _isDarkMode = !_isDarkMode;
+      _isDarkMode = prefs.getBool(_themeKey) ?? false;
     });
-    _saveThemePreference();
+  }
+
+  void _toggleTheme() async {
+    setState(() => _isDarkMode = !_isDarkMode);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_themeKey, _isDarkMode);
   }
 
   Future<void> _savePasswords() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final passwordsMap = _passwords.map(
-        (key, value) => MapEntry(key, value.toJson())
-      );
-      final jsonString = json.encode(passwordsMap);
-      final encryptedData = _encrypt(jsonString);
-      
-      await prefs.setString(_storageKey, encryptedData);
-    } catch (e) {
-      _showSnackBar('Error al guardar las contraseñas', Colors.red);
-    }
+    final prefs = await SharedPreferences.getInstance();
+    final passwordsMap = _passwords.map((key, value) => MapEntry(key, value.toJson()));
+    final jsonString = json.encode(passwordsMap);
+    await prefs.setString(_storageKey, _encrypt(jsonString));
   }
 
-  String _encrypt(String data) {
-    final bytes = utf8.encode(data);
-    final key = utf8.encode(_encryptionKey);
-    final hmac = Hmac(sha256, key);
-    final digest = hmac.convert(bytes);
-    final encrypted = base64.encode(bytes);
-    return '$encrypted.${digest.toString()}';
-  }
-
-  String _decrypt(String encryptedData) {
-    final parts = encryptedData.split('.');
-    if (parts.length != 2) throw Exception('Datos inválidos');
-    final bytes = base64.decode(parts[0]);
-    return utf8.decode(bytes);
-  }
-
-  String _generatePassword({
-    int length = 16,
-    bool includeUppercase = true,
-    bool includeLowercase = true,
-    bool includeNumbers = true,
-    bool includeSymbols = true,
-  }) {
-    String charset = '';
-    if (includeUppercase) charset += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    if (includeLowercase) charset += 'abcdefghijklmnopqrstuvwxyz';
-    if (includeNumbers) charset += '0123456789';
-    if (includeSymbols) charset += r'!@#$%^&*()_+-=[]{}|;:,.<>?';
-    if (charset.isEmpty) return '';
-    
-    Random random = Random.secure();
-    return List.generate(length, (index) => charset[random.nextInt(charset.length)]).join();
-  }
-
-  void _showPasswordGenerator() {
-    int length = 16;
-    bool includeUppercase = true;
-    bool includeLowercase = true;
-    bool includeNumbers = true;
-    bool includeSymbols = true;
-    String generatedPassword = '';
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('Generador de Contraseñas'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Text('Longitud: '),
-                    Expanded(
-                      child: Slider(
-                        value: length.toDouble(),
-                        min: 8,
-                        max: 32,
-                        divisions: 24,
-                        label: length.toString(),
-                        onChanged: (value) {
-                          setDialogState(() => length = value.toInt());
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-                CheckboxListTile(
-                  title: Text('Mayúsculas (A-Z)'),
-                  value: includeUppercase,
-                  onChanged: (value) => setDialogState(() => includeUppercase = value!),
-                ),
-                CheckboxListTile(
-                  title: Text('Minúsculas (a-z)'),
-                  value: includeLowercase,
-                  onChanged: (value) => setDialogState(() => includeLowercase = value!),
-                ),
-                CheckboxListTile(
-                  title: Text('Números (0-9)'),
-                  value: includeNumbers,
-                  onChanged: (value) => setDialogState(() => includeNumbers = value!),
-                ),
-                CheckboxListTile(
-                  title: Text('Símbolos (!@#)'),
-                  value: includeSymbols,
-                  onChanged: (value) => setDialogState(() => includeSymbols = value!),
-                ),
-                SizedBox(height: 20),
-                ElevatedButton(
-                  onPressed: () {
-                    setDialogState(() {
-                      generatedPassword = _generatePassword(
-                        length: length,
-                        includeUppercase: includeUppercase,
-                        includeLowercase: includeLowercase,
-                        includeNumbers: includeNumbers,
-                        includeSymbols: includeSymbols,
-                      );
-                    });
-                  },
-                  child: Text('Generar Nueva'),
-                ),
-                if (generatedPassword.isNotEmpty) ...[
-                  SizedBox(height: 10),
-                  Container(
-                    padding: EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: SelectableText(
-                      generatedPassword,
-                      style: GoogleFonts.sourceCodePro(),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Cancelar'),
-            ),
-            if (generatedPassword.isNotEmpty)
-              TextButton(
-                onPressed: () {
-                  _passwordController.text = generatedPassword;
-                  Navigator.pop(context);
-                },
-                child: Text('Usar Contraseña'),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showLoadingIndicator(String message) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        content: Row(
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(width: 20),
-            Text(message),
-          ],
-        ),
-      ),
-    );
-  }
-  
+  // --- LÓGICA DE BACKUP (Restaurada) ---
   Future<void> _exportPasswords() async {
-    _showLoadingIndicator('Preparando exportación...');
     try {
-      final passwordsMap = _passwords.map((key, value) => 
-        MapEntry(key, value.toJson())
-      );
+      final passwordsMap = _passwords.map((key, value) => MapEntry(key, value.toJson()));
       final jsonString = json.encode(passwordsMap);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final fileName = 'passwords_backup_$timestamp.json';
-      
       final bytes = utf8.encode(jsonString);
 
       String? outputFile = await FilePicker.platform.saveFile(
-        dialogTitle: 'Por favor, selecciona dónde guardar el backup:',
+        dialogTitle: 'Guardar backup',
         fileName: fileName,
         bytes: bytes,
       );
-      if (mounted) Navigator.pop(context); 
 
+      if (!mounted) return;
       if (outputFile != null) {
-        _showSnackBar('Backup exportado exitosamente!', Colors.green);
-      } else {
-        _showSnackBar('Exportación cancelada por el usuario.', Colors.orange);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Backup exportado'), backgroundColor: Colors.green));
       }
-
     } catch (e) {
-      if (mounted) Navigator.pop(context);
-      _showSnackBar('Error al exportar: ${e.toString()}', Colors.red);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}'), backgroundColor: Colors.red));
     }
   }
 
@@ -731,60 +496,58 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['json'],
-        dialogTitle: 'Seleccionar archivo de backup',
       );
+      
       if (result != null && result.files.single.path != null) {
-        _showLoadingIndicator('Importando...');
         final file = File(result.files.single.path!);
         final contents = await file.readAsString();
-        
         final Map<String, dynamic> passwordsMap = json.decode(contents);
         
         Map<String, PasswordEntry> newPasswords = {};
         passwordsMap.forEach((key, value) {
-          try {
-            newPasswords[key] = PasswordEntry.fromJson(value);
-          } catch (e) {
-            throw Exception('Formato de archivo inválido');
-          }
+          newPasswords[key] = PasswordEntry.fromJson(value);
         });
-        bool? shouldImport = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text('Confirmar importación'),
-            content: Text('Se encontraron ${newPasswords.length} contraseñas. ¿Deseas importarlas? Esto reemplazará todas las contraseñas actuales.'),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Cancelar')),
-              TextButton(onPressed: () => Navigator.pop(context, true), child: Text('Importar')),
-            ],
-          ),
-        );
-        if (shouldImport == true) {
-          setState(() {
-            _passwords = newPasswords;
-            _filterPasswords();
-          });
-          await _savePasswords();
-          _showSnackBar('${newPasswords.length} contraseñas importadas correctamente', Colors.green);
-        }
+
+        if (!mounted) return;
+        
+        setState(() {
+          _passwords = newPasswords;
+          _filterPasswords();
+        });
+        await _savePasswords();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Backup importado'), backgroundColor: Colors.green));
       }
     } catch (e) {
-      _showSnackBar('Error al importar: ${e.toString()}', Colors.red);
-    } finally {
-      if (mounted && Navigator.canPop(context)) {
-        Navigator.pop(context);
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error al importar'), backgroundColor: Colors.red));
     }
+  }
+
+  String _encrypt(String data) {
+    final bytes = utf8.encode(data);
+    final key = utf8.encode(_encryptionKey);
+    final hmac = Hmac(sha256, key);
+    final digest = hmac.convert(bytes);
+    return '${base64.encode(bytes)}.${digest.toString()}';
+  }
+
+  String _decrypt(String encryptedData) {
+    final parts = encryptedData.split('.');
+    final bytes = base64.decode(parts[0]);
+    return utf8.decode(bytes);
+  }
+
+  String _generatePassword({int length = 16}) {
+    const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#\$%^&*()';
+    Random random = Random.secure();
+    return List.generate(length, (index) => charset[random.nextInt(charset.length)]).join();
   }
 
   void _savePassword() async {
     String app = _appController.text.trim();
     String password = _passwordController.text.trim();
-    
-    if (app.isEmpty || password.isEmpty) {
-      _showSnackBar('Por favor, completa todos los campos', Colors.red);
-      return;
-    }
+    if (app.isEmpty || password.isEmpty) return;
     
     DateTime now = DateTime.now();
     String appKey = app.toLowerCase();
@@ -792,154 +555,229 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
       if (_editingApp != null) {
         String oldKey = _editingApp!.toLowerCase();
         if (oldKey != appKey) {
-            _passwords.remove(oldKey);
+          _passwords.remove(oldKey);
         }
         _passwords[appKey] = PasswordEntry(
-          app: app,
-          password: password,
-          createdAt: _passwords[oldKey]?.createdAt ?? now,
-          lastModified: now,
+          app: app, password: password,
+          createdAt: _passwords[oldKey]?.createdAt ?? now, lastModified: now,
         );
       } else {
-        _passwords[appKey] = PasswordEntry(
-          app: app,
-          password: password,
-          createdAt: now,
-        );
+        _passwords[appKey] = PasswordEntry(app: app, password: password, createdAt: now);
       }
       _editingApp = null;
       _filterPasswords();
     });
-    
     _appController.clear();
     _passwordController.clear();
     FocusScope.of(context).unfocus();
-    
     await _savePasswords();
-    _showSnackBar('Contraseña guardada exitosamente', Colors.green);
-  }
-
-  void _editPassword(String appKey) {
-    setState(() {
-      _editingApp = appKey;
-      _appController.text = _passwords[appKey]!.app;
-      _passwordController.text = _passwords[appKey]!.password;
-      _passwordFocusNode.requestFocus();
-    });
-  }
-
-  void _cancelEdit() {
-    setState(() {
-      _editingApp = null;
-      _appController.clear();
-      _passwordController.clear();
-      FocusScope.of(context).unfocus();
-    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Guardado'), backgroundColor: Colors.green));
   }
 
   void _deletePassword(String appKey) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Confirmar eliminación'),
-          content: Text('¿Estás seguro de que quieres eliminar la contraseña de "${_passwords[appKey]!.app}"?'),
-          actions: [
-            TextButton(
-               onPressed: () => Navigator.of(context).pop(),
-              child: Text('Cancelar'),
-            ),
-            TextButton(
-              onPressed: () async {
-                setState(() {
-                  _passwords.remove(appKey);
-                  _visiblePasswords.remove(appKey);
-                  _filterPasswords();
-                });
-                await _savePasswords();
-                Navigator.of(context).pop();
-                _showSnackBar('Contraseña eliminada', 
-                Colors.orange);
-              },
-              child: Text('Eliminar', style: TextStyle(color: Colors.red)),
-            ),
-          ],
-        );
-      },
-    );
+     setState(() {
+       _passwords.remove(appKey);
+       _visiblePasswords.remove(appKey);
+       _filterPasswords();
+     });
+     _savePasswords();
   }
 
-  void _togglePasswordVisibility(String appKey) {
-    setState(() {
-      if (_visiblePasswords.contains(appKey)) {
-        _visiblePasswords.remove(appKey);
-      } else {
-        _visiblePasswords.add(appKey);
-      }
-    });
-  }
+  // --- WIDGETS ---
 
-  void _copyPassword(String password) {
-    Clipboard.setData(ClipboardData(text: password));
-    _showSnackBar('Contraseña copiada al portapapeles', Colors.blue);
-  }
-
-  void _showSnackBar(String message, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: color,
-        duration: Duration(seconds: 3),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
-  }
-
-  String _formatDate(DateTime date) {
-    return '${date.day}/${date.month}/${date.year}';
-  }
-
-  Widget _getAvatar(String appName) {
-    final String initials = appName.isNotEmpty ? appName.substring(0, 1).toUpperCase() : '?';
-    final Color color = Colors.primaries[appName.hashCode % Colors.primaries.length].shade100;
-    final Color textColor = Colors.primaries[appName.hashCode % Colors.primaries.length].shade700;
-    return CircleAvatar(
-      backgroundColor: color,
-      child: Text(
-        initials,
-        style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
-      ),
-    );
-  }
-
-  Widget _buildPasswordStrengthIndicator(String password) {
-    final strength = PasswordStrengthAnalyzer.analyzePassword(password);
-    final color = PasswordStrengthAnalyzer.getStrengthColor(strength);
-    final text = PasswordStrengthAnalyzer.getStrengthText(strength);
-    final icon = PasswordStrengthAnalyzer.getStrengthIcon(strength);
-    
+  Widget _buildHeader() {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 25),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3), width: 1),
+        color: _isDarkMode ? AppColors.darkSurface : AppColors.lightPrimary,
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(30),
+          bottomRight: Radius.circular(30),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.2),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
+          )
+        ],
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Column(
         children: [
-          Icon(icon, size: 16, 
-          color: color),
-          SizedBox(width: 6),
-          Text(
-            text,
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Mis Contraseñas', style: GoogleFonts.outfit(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                  Text('${_passwords.length} protegidas', style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 14)),
+                ],
+              ),
+              Row(
+                children: [
+                  IconButton(
+                    icon: Icon(_isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded, color: Colors.white),
+                    onPressed: _toggleTheme,
+                  ),
+                  PopupMenuButton(
+                    icon: const Icon(Icons.more_vert, color: Colors.white),
+                    onSelected: (value) {
+                      if (value == 'export') _exportPasswords();
+                      if (value == 'import') _importPasswords();
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(value: 'export', child: Text('Exportar Backup')),
+                      const PopupMenuItem(value: 'import', child: Text('Importar Backup')),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 25),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 15),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: TextField(
+              controller: _searchController,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'Buscar servicio...',
+                hintStyle: TextStyle(color: Colors.white60),
+                border: InputBorder.none,
+                icon: Icon(Icons.search, color: Colors.white70),
+              ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInputCard() {
+    final bool isDark = _isDarkMode;
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: isDark ? Border.all(color: Colors.white10) : null,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _editingApp == null ? 'Nueva Contraseña' : 'Editar Contraseña',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: isDark ? Colors.white : AppColors.lightTextPrimary),
+          ),
+          const SizedBox(height: 15),
+          TextField(
+            controller: _appController,
+            style: TextStyle(color: isDark ? Colors.white : Colors.black),
+            decoration: InputDecoration(
+              labelText: 'Servicio (ej. Netflix)',
+              labelStyle: TextStyle(color: isDark ? Colors.grey : Colors.grey[600]),
+              filled: true,
+              fillColor: isDark ? Colors.black26 : Colors.grey[50],
+              prefixIcon: const Icon(Icons.apps_rounded),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).primaryColor)),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _passwordController,
+                  obscureText: _isPasswordObscured,
+                  style: TextStyle(color: isDark ? Colors.white : Colors.black),
+                  onChanged: (val) => setState((){}),
+                  decoration: InputDecoration(
+                    labelText: 'Contraseña',
+                    labelStyle: TextStyle(color: isDark ? Colors.grey : Colors.grey[600]),
+                    filled: true,
+                    fillColor: isDark ? Colors.black26 : Colors.grey[50],
+                    prefixIcon: const Icon(Icons.lock_outline_rounded),
+                    suffixIcon: IconButton(
+                      icon: Icon(_isPasswordObscured ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                      onPressed: () => setState(() => _isPasswordObscured = !_isPasswordObscured),
+                    ),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).primaryColor)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                decoration: BoxDecoration(color: Theme.of(context).primaryColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+                child: IconButton(
+                  icon: Icon(Icons.auto_awesome, color: Theme.of(context).primaryColor),
+                  onPressed: () {
+                    final pass = _generatePassword();
+                    setState(() { _passwordController.text = pass; });
+                  },
+                ),
+              ),
+            ],
+          ),
+          if (_passwordController.text.isNotEmpty)
+             Padding(
+               padding: const EdgeInsets.only(top: 10.0),
+               child: Row(
+                 children: [
+                   Container(
+                     height: 4, width: 40,
+                     decoration: BoxDecoration(
+                       color: PasswordStrengthAnalyzer.getStrengthColor(PasswordStrengthAnalyzer.analyzePassword(_passwordController.text)),
+                       borderRadius: BorderRadius.circular(2)
+                     ),
+                   ),
+                   const SizedBox(width: 10),
+                   Text(
+                     'Seguridad', 
+                     style: TextStyle(fontSize: 12, color: isDark ? Colors.grey : Colors.grey[600])
+                   ),
+                 ],
+               ),
+             ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _savePassword,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+              ),
+              child: Text(_editingApp == null ? 'Guardar en la Bóveda' : 'Actualizar Entrada'),
+            ),
+          ),
+           if (_editingApp != null)
+             TextButton(
+               onPressed: () => setState(() {
+                 _editingApp = null;
+                 _appController.clear();
+                 _passwordController.clear();
+               }),
+               child: const Text('Cancelar edición', style: TextStyle(color: Colors.redAccent)),
+             )
         ],
       ),
     );
@@ -948,356 +786,200 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
   @override
   Widget build(BuildContext context) {
     return Theme(
-      data: _isDarkMode ? ThemeData.dark() : ThemeData.light(),
-      child: Scaffold(
-      backgroundColor: _isDarkMode ? Colors.grey[900] : Colors.grey[100],
-      appBar: AppBar(
-        title: Text('Mis Contraseñas', style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: Colors.white)),
-        backgroundColor: Colors.blue[700],
-        foregroundColor: Colors.white,
-        actions: [
-          
-          IconButton(
-            icon: Icon(_isDarkMode ? Icons.light_mode : Icons.dark_mode),
-            onPressed: _toggleTheme,
-            tooltip: _isDarkMode ? 'Modo Claro' : 'Modo Oscuro',
-          ),
-          PopupMenuButton(
-            icon: Icon(Icons.more_vert),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: 'export',
-                child: ListTile(leading: Icon(Icons.file_upload_outlined, color: Colors.green), title: Text('Exportar')),
-              ),
-              PopupMenuItem(
-                value: 'import',
-                child: ListTile(leading: Icon(Icons.file_download_outlined, color: Colors.orange), title: Text('Importar')),
-              ),
-            ],
-            onSelected: (value) {
-              if (value == 'export') {
-                 _exportPasswords();
-              } else if (value == 'import') _importPasswords();
-            },
-          ),
-        ],
+      data: _isDarkMode ? ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: AppColors.darkBackground,
+        primaryColor: AppColors.darkPrimary,
+        colorScheme: const ColorScheme.dark(primary: AppColors.darkPrimary, secondary: AppColors.darkAccent),
+      ) : ThemeData.light().copyWith(
+        scaffoldBackgroundColor: AppColors.lightBackground,
+        primaryColor: AppColors.lightPrimary,
       ),
-      body: Column(
-        children: [
-          Container(
-            padding: EdgeInsets.all(16.0),
-            decoration: BoxDecoration(
-              color: _isDarkMode ? Colors.grey[800] : Colors.white,
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(30),
-                bottomRight: Radius.circular(30),
-              ),
-              boxShadow: [
-                BoxShadow(
-                   color: Colors.black.withOpacity(_isDarkMode ? 0.3 : 0.05),
-                  spreadRadius: 2,
-                  blurRadius: 10,
-                  offset: Offset(0, 4),
-                )
-              ]
-            ),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _appController,
-                  style: TextStyle(color: _isDarkMode ? Colors.white : Colors.black),
-                  decoration: InputDecoration(
-                    labelText: 'Nombre de la App o Servicio',
-                    labelStyle: TextStyle(color: _isDarkMode ?
-                    Colors.grey[300] : Colors.grey[600]),
-                    prefixIcon: Icon(Icons.apps_outlined, color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
-                    filled: true,
-                    fillColor: _isDarkMode ?
-                    Colors.grey[700] : Colors.grey[100],
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(15),
-                      borderSide: BorderSide.none,
-                    ),
+      child: Scaffold(
+        body: Column(
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  _buildInputCard(),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    child: Text('Tus Credenciales', style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold, color: _isDarkMode ? Colors.white : AppColors.lightTextPrimary)),
                   ),
-                ),
-                SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        children: [
-                          TextField(
-                            controller: _passwordController,
-                            focusNode: _passwordFocusNode,
-                            obscureText: _isPasswordObscured, // Usa la variable
-                            onChanged: (value) => setState(() {}), // Para actualizar el indicador
-                            style: TextStyle(color: _isDarkMode ? Colors.white : Colors.black),
-                            decoration: InputDecoration(
-                              labelText: 'Contraseña',
-                              labelStyle: TextStyle(color: _isDarkMode ?
-                              Colors.grey[300] : Colors.grey[600]),
-                              prefixIcon: Icon(Icons.lock_outline, color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
-                              // Se añade el icono para mostrar/ocultar
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _isPasswordObscured ? Icons.visibility : Icons.visibility_off,
-                                  color: _isDarkMode ? Colors.grey[300] : Colors.grey[600],
-                                ),
-                                onPressed: () {
-                                  setState(() {
-                                    _isPasswordObscured = !_isPasswordObscured;
-                                  });
-                                },
-                              ),
-                              filled: true,
-                              fillColor: _isDarkMode ?
-                              Colors.grey[700] : Colors.grey[100],
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(15),
-                                borderSide: BorderSide.none,
-                              ),
-                            ),
-                          ),
-                          // Indicador de fortaleza de contraseña
-                          if (_passwordController.text.isNotEmpty) ...[
-                            SizedBox(height: 8),
-                            _buildPasswordStrengthIndicator(_passwordController.text),
+                  _filteredApps.isEmpty 
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(40.0),
+                        child: Column(
+                          children: [
+                            Icon(Icons.shield_outlined, size: 60, color: _isDarkMode ? Colors.white12 : Colors.black12),
+                            const SizedBox(height: 10),
+                            Text("Todo seguro", style: TextStyle(color: _isDarkMode ? Colors.white38 : Colors.black38)),
                           ],
-                        ],
-                      ),
-                    ),
-                    SizedBox(width: 10),
-                    IconButton(
-                      onPressed: _showPasswordGenerator,
-                      icon: Icon(Icons.auto_awesome),
-                      
-                      tooltip: 'Generar contraseña',
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.blue[50],
-                        foregroundColor: Colors.blue[600],
-                        padding: 
-                        EdgeInsets.all(12),
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 15),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: _editingApp == null 
-                                ?
-                                [Colors.blue[700]!, Colors.lightBlueAccent.shade400]
-                                : [Colors.orange.shade600, Colors.orange.shade400],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(15),
-                        ),
-                        child: ElevatedButton.icon(
-                          onPressed: _savePassword,
-                          icon: Icon(_editingApp == null ? Icons.save_outlined : Icons.edit_outlined, size: 24, color: Colors.white),
-                          label: Text(
-                            _editingApp == null ? 'Guardar' : 'Actualizar',
-                            style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            padding: EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                          ),
                         ),
                       ),
-                    ),
-                    if (_editingApp != null) ...[
-                      SizedBox(width: 10),
-                      ElevatedButton.icon(
-                        onPressed: _cancelEdit,
-                        icon: Icon(Icons.cancel_outlined),
-                        label: Text('Cancelar'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.grey[300],
-                          foregroundColor: Colors.black54,
-                          padding: EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ),
-          ),
-          
-          if (_passwords.isNotEmpty) ...[
-            Padding(
-              padding: EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
-              child: TextField(
-                controller: _searchController,
-                style: TextStyle(color: _isDarkMode ?
-                Colors.white : Colors.black),
-                decoration: InputDecoration(
-                  hintText: 'Buscar por nombre...',
-                  hintStyle: TextStyle(color: _isDarkMode ? Colors.grey[400] : Colors.grey[600]),
-                  prefixIcon: Icon(Icons.search, color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
-                  suffixIcon: _searchController.text.isNotEmpty
-                      ? IconButton(
-                          icon: Icon(Icons.clear, color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
-                          onPressed: () {
-                            _searchController.clear();
-                            _filterPasswords();
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _filteredApps.length,
+                      itemBuilder: (context, index) {
+                        return TweenAnimationBuilder(
+                          tween: Tween<double>(begin: 0, end: 1),
+                          duration: Duration(milliseconds: 400 + (index * 100)),
+                          curve: Curves.easeOutQuad,
+                          builder: (context, double val, child) {
+                            return Opacity(
+                              opacity: val,
+                              child: Transform.translate(
+                                offset: Offset(0, 20 * (1 - val)),
+                                child: child,
+                              ),
+                            );
                           },
-                        )
-                      : null,
-                  filled: true,
-                  fillColor: _isDarkMode ? Colors.grey[800] : Colors.white,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(15),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
+                          child: _PasswordCard(
+                            entry: _passwords[_filteredApps[index]]!,
+                            appKey: _filteredApps[index],
+                            isVisible: _visiblePasswords.contains(_filteredApps[index]),
+                            isDarkMode: _isDarkMode,
+                            onToggleVisibility: () => setState(() {
+                              final key = _filteredApps[index];
+                              if (_visiblePasswords.contains(key)) {
+                                _visiblePasswords.remove(key);
+                              } else {
+                                _visiblePasswords.add(key);
+                              }
+                            }),
+                            onEdit: () {
+                              setState(() {
+                                _editingApp = _filteredApps[index];
+                                _appController.text = _passwords[_editingApp]!.app;
+                                _passwordController.text = _passwords[_editingApp]!.password;
+                              });
+                            },
+                            onDelete: () => _deletePassword(_filteredApps[index]),
+                          ),
+                        );
+                      },
+                    ),
+                  const SizedBox(height: 40),
+                ],
               ),
             ),
           ],
-          
-          Expanded(
-            child: _filteredApps.isEmpty
-                ?
-                Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.shield_moon_outlined, size: 100, color: _isDarkMode ? Colors.grey[600] : Colors.grey[400]),
-                        SizedBox(height: 20),
-                        Text(
-                          '¡Bienvenido!',
-                          style: GoogleFonts.inter(fontSize: 22, fontWeight: FontWeight.bold, color: _isDarkMode ? Colors.grey[200] : Colors.grey[700]),
-                        ),
-                        SizedBox(height: 10),
-                        Text(
-                          'Aún no tienes contraseñas guardadas.\n¡Agrega la primera para empezar a protegerte! 🚀',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 16, color: _isDarkMode ? Colors.grey[300] : Colors.grey[600]),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    padding: EdgeInsets.all(16.0),
-                    itemCount: _filteredApps.length,
-                    itemBuilder: (context, index) {
-                      String appKey = _filteredApps[index];
-                      PasswordEntry entry = _passwords[appKey]!;
-                      bool isVisible = _visiblePasswords.contains(appKey);
-                      
-                      return Card(
-                        elevation: 4,
-                        shadowColor: Colors.black.withOpacity(_isDarkMode ? 0.3 : 0.1),
-                        margin: EdgeInsets.only(bottom: 12),
-                        color: _isDarkMode 
-                            ? (index.isEven ? Colors.grey[800] : Colors.grey[750])
-                            : (index.isEven ? Colors.white : Colors.blue.shade50),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(15.0),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8.0),
-                          child: ListTile(
-                            leading: _getAvatar(entry.app),
-                            title: Text(entry.app, style: TextStyle(fontWeight: FontWeight.bold, 
-                            color: _isDarkMode ? Colors.white : Colors.black)),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: AnimatedSwitcher(
-                                        duration: const Duration(milliseconds: 300),
-                                        transitionBuilder: (child, animation) {
-                                          return FadeTransition(opacity: animation, child: child);
-                                        },
-                                        child: Text(
-                                          isVisible ? entry.password : '•' * 10,
-                                          key: ValueKey<bool>(isVisible),
-                                          style: GoogleFonts.sourceCodePro(
-                                            fontSize: 15,
-                                            color: isVisible 
-                                                ? (_isDarkMode ? Colors.white : Colors.black87)
-                                                : (_isDarkMode ? Colors.grey[400] : Colors.grey[600])
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                    ),
-                                    ),
-                                    IconButton(
-                                      icon: Icon(isVisible ? Icons.visibility_off_outlined : Icons.visibility_outlined),
-                                      onPressed: () => _togglePasswordVisibility(appKey),
-                                      tooltip: isVisible ?
-                                      'Ocultar' : 'Mostrar',
-                                      iconSize: 20,
-                                      color: _isDarkMode ?
-                                      Colors.grey[300] : Colors.grey[600],
-                                    ),
-                                    IconButton(
-                                      icon: Icon(Icons.copy_outlined),
-                                      onPressed: () => _copyPassword(entry.password),
-                                      tooltip: 'Copiar',
-                                      iconSize: 20,
-                                      color: _isDarkMode ? Colors.grey[300] : Colors.grey[600],
-                                    ),
-                                  ],
-                                ),
-                                SizedBox(height: 5),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(
-                                      entry.lastModified != null 
-                                          ? 'Mod: ${_formatDate(entry.lastModified!)}'
-                                          : 'Creado: ${_formatDate(entry.createdAt)}',
-                                      style: TextStyle(fontSize: 12, color: _isDarkMode ?
-                                      Colors.grey[400] : Colors.grey[500]),
-                                    ),
-                                    _buildPasswordStrengthIndicator(entry.password),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            trailing: PopupMenuButton(
-                              icon: Icon(Icons.more_horiz),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                              itemBuilder: (context) => [
-                                PopupMenuItem(
-                                  value: 'edit',
-                                  child: ListTile(leading: Icon(Icons.edit_outlined, color: Colors.blue), title: Text('Editar')),
-                                ),
-                                PopupMenuItem(
-                                  value: 'delete',
-                                  child: ListTile(leading: Icon(Icons.delete_outline, color: Colors.red), title: Text('Eliminar')),
-                                ),
-                              ],
-                              onSelected: (value) {
-                                if (value == 'edit') {
-                                  _editPassword(appKey);
-                                } else if (value == 'delete') {
-                                  _deletePassword(appKey);
-                                }
-                              },
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PasswordCard extends StatelessWidget {
+  final PasswordEntry entry;
+  final String appKey;
+  final bool isVisible;
+  final bool isDarkMode;
+  final VoidCallback onToggleVisibility;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _PasswordCard({
+    required this.entry,
+    required this.appKey,
+    required this.isVisible,
+    required this.isDarkMode,
+    required this.onToggleVisibility,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: isDarkMode ? const Color(0xFF141414) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: isDarkMode ? Border.all(color: Colors.white.withValues(alpha: 0.05)) : null,
+        boxShadow: [
+          if (!isDarkMode)
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
         ],
       ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: Container(
+          width: 50, height: 50,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: isDarkMode 
+                ? [Colors.blueGrey.shade800, Colors.black]
+                : [Colors.blue.shade50, Colors.white],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Center(
+            child: Text(
+              entry.app.isNotEmpty ? entry.app[0].toUpperCase() : '?',
+              style: TextStyle(
+                fontSize: 20, 
+                fontWeight: FontWeight.bold,
+                color: isDarkMode ? Colors.white : AppColors.lightPrimary
+              ),
+            ),
+          ),
+        ),
+        title: Text(entry.app, style: TextStyle(fontWeight: FontWeight.w600, color: isDarkMode ? Colors.white : AppColors.lightTextPrimary)),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4.0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  isVisible ? entry.password : '••••••••••••',
+                  style: GoogleFonts.sourceCodePro(
+                    color: isVisible 
+                      ? (isDarkMode ? Colors.greenAccent : Colors.green[700]) 
+                      : (isDarkMode ? Colors.white38 : Colors.grey),
+                    fontWeight: isVisible ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(isVisible ? Icons.visibility_off_rounded : Icons.visibility_rounded, size: 20),
+              color: isDarkMode ? Colors.white54 : Colors.grey[400],
+              onPressed: onToggleVisibility,
+            ),
+            PopupMenuButton(
+              icon: Icon(Icons.more_vert_rounded, color: isDarkMode ? Colors.white54 : Colors.grey[400]),
+              color: isDarkMode ? const Color(0xFF1E1E1E) : Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              onSelected: (val) {
+                if (val == 'edit') onEdit();
+                if (val == 'copy') Clipboard.setData(ClipboardData(text: entry.password));
+                if (val == 'delete') onDelete();
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'copy', child: Row(children: [Icon(Icons.copy, size: 18), SizedBox(width: 8), Text('Copiar')])),
+                const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 18), SizedBox(width: 8), Text('Editar')])),
+                const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, color: Colors.red, size: 18), SizedBox(width: 8), Text('Eliminar', style: TextStyle(color: Colors.red))])),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
