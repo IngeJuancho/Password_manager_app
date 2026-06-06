@@ -1,58 +1,65 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
     namespace = "com.example.password_manager"
-    compileSdk = flutter.compileSdkVersion
-
-    // Aquí se corrige la versión del NDK
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
+        jvmTarget = "17"
     }
 
     defaultConfig {
-        // Application ID
         applicationId = "com.password.manager"
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
-        versionCode = 10
-        versionName = "2.7.1"
+        minSdk = 26
+        targetSdk = 35
+        versionCode = 12
+        versionName = "2.0.1"
     }
 
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+            isShrinkResources = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
-    // --- NUEVO CÓDIGO PARA RENOMBRAR EL APK (Kotlin DSL) ---
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+
     applicationVariants.all {
-        val variant = this
         outputs.all {
-            // En Kotlin DSL necesitamos verificar el tipo para acceder a outputFileName
             if (this is com.android.build.gradle.internal.api.BaseVariantOutputImpl) {
-                // Opción A: Nombre fijo
-                outputFileName = "Password Manager.apk"
-                
-                // Opción B: Nombre con versión (ej: SecureVault-v2.7.apk) - Si prefieres esta, descomenta:
-                // outputFileName = "SecureVault-v${variant.versionName}.apk"
+                outputFileName = "Password Manager v${versionName}.apk"
             }
         }
     }
-    // -------------------------------------------------------
 }
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation("com.google.code.gson:gson:2.10.1")
+    implementation("androidx.biometric:biometric:1.2.0-alpha05")
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.fragment:fragment-ktx:1.6.2")
+    implementation("androidx.autofill:autofill:1.1.0")
 }
