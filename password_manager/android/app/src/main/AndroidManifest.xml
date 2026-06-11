@@ -12,7 +12,7 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:requestLegacyExternalStorage="true">
-        
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -22,11 +22,11 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
-            
+
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme"/>
-            
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -38,13 +38,25 @@
             </intent-filter>
         </activity>
 
-        <!-- NUEVA: Activity de Autenticación Biométrica -->
+        <!--
+            FIX ANDROID 15/16:
+            - theme="@style/Theme.Transparent": evita que el sistema bloquee
+              el PendingIntent al considerar la Activity una interrupción del autofill.
+            - taskAffinity="": corre en tarea propia, no contamina el back stack
+              de la app que está recibiendo el autofill.
+            - launchMode="singleInstance": evita instancias apiladas si el usuario
+              toca el botón dos veces rápido.
+            - Se eliminó noHistory porque con singleInstance es redundante y en
+              algunos OEMs con Android 15 causaba que el resultado nunca se entregara.
+        -->
         <activity
             android:name=".AuthenticationActivity"
             android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:theme="@style/Theme.Transparent"
             android:excludeFromRecents="true"
-            android:noHistory="true"/>
+            android:taskAffinity=""
+            android:launchMode="singleInstance"
+            android:configChanges="orientation|keyboardHidden|screenSize" />
 
         <meta-data
             android:name="flutterEmbedding"
@@ -55,11 +67,11 @@
             android:label="Password Manager Autofill"
             android:permission="android.permission.BIND_AUTOFILL_SERVICE"
             android:exported="true">
-            
+
             <meta-data
                 android:name="android.autofill"
                 android:resource="@xml/service_configuration" />
-            
+
             <intent-filter>
                 <action android:name="android.service.autofill.AutofillService" />
             </intent-filter>

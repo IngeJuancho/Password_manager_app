@@ -1,55 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    FIX ANDROID 15/16:
+    RemoteViews se infla en un proceso de servicio sin Activity ni Theme Context.
+    Los atributos ?android:attr/... (selectableItemBackground, colorAccent,
+    textColorPrimary, textColorSecondary) no pueden resolverse en ese contexto
+    y en Android 15/16 lanzan una excepción que mata el proceso completo.
+
+    REGLA: En layouts usados por RemoteViews NUNCA usar ?attr/... ni @style/...
+    Solo valores absolutos: colores hex, dimensiones fijas, drawables del sistema
+    que no dependan de tema.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="horizontal"
-    android:paddingHorizontal="20dp"
-    android:paddingVertical="16dp"
+    android:paddingLeft="20dp"
+    android:paddingRight="20dp"
+    android:paddingTop="14dp"
+    android:paddingBottom="14dp"
     android:gravity="center_vertical"
-    android:background="?android:attr/selectableItemBackground"
-    android:clickable="true"
-    android:focusable="true">
+    android:background="#1A1A2E">
 
-    <!-- Icono de la App o Candado -->
+    <!-- Ícono candado — sin tint por atributo de tema -->
     <ImageView
         android:id="@+id/autofill_icon"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:src="@android:drawable/ic_secure"
-        android:contentDescription="Icono de Autocompletado"
-        android:tint="?android:attr/colorAccent" />
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:src="@android:drawable/ic_lock_lock"
+        android:contentDescription="Autocompletado" />
 
-    <!-- Contenedor de Textos -->
+    <!-- Textos -->
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:layout_marginStart="16dp"
+        android:layout_marginLeft="14dp"
         android:orientation="vertical">
 
-        <!-- Título de la App (Ej. Netflix) -->
         <TextView
             android:id="@+id/autofill_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="16sp"
-            android:fontFamily="sans-serif-medium"
-            android:textColor="?android:attr/textColorPrimary"
+            android:textSize="15sp"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
             android:ellipsize="end"
             android:maxLines="1" />
 
-        <!-- Subtítulo (Ej. usuario@correo.com) -->
         <TextView
             android:id="@+id/autofill_subtitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="13sp"
-            android:fontFamily="sans-serif"
-            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="12sp"
+            android:textColor="#AAAAAA"
             android:layout_marginTop="2dp"
             android:ellipsize="end"
             android:maxLines="1" />
+
     </LinearLayout>
 
 </LinearLayout>
-```

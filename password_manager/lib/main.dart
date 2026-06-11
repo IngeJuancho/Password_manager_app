@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart'; // Importante para debugPrint
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
@@ -101,7 +102,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// --- AUTH SCREEN (INTACTO, SOLO ADAPTADO AL TEMA OSCURO GENERAL) ---
+// --- AUTH SCREEN ---
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
 
@@ -216,16 +217,28 @@ class PasswordEntry {
   String? packageId;
   DateTime createdAt;
   DateTime? lastModified;
+  bool isFavorite;
 
-  PasswordEntry({required this.app, this.username, required this.password, this.packageId, required this.createdAt, this.lastModified});
+  PasswordEntry({
+    required this.app, 
+    this.username, 
+    required this.password, 
+    this.packageId, 
+    required this.createdAt, 
+    this.lastModified,
+    this.isFavorite = false
+  });
   
   Map<String, dynamic> toJson() => {
-    'app': app, 'username': username, 'password': password, 'packageId': packageId, 'createdAt': createdAt.toIso8601String(), 'lastModified': lastModified?.toIso8601String(),
+    'app': app, 'username': username, 'password': password, 'packageId': packageId, 
+    'createdAt': createdAt.toIso8601String(), 'lastModified': lastModified?.toIso8601String(),
+    'isFavorite': isFavorite,
   };
 
   factory PasswordEntry.fromJson(Map<String, dynamic> json) => PasswordEntry(
     app: json['app'], username: json['username'], password: json['password'], packageId: json['packageId'],
     createdAt: DateTime.parse(json['createdAt']), lastModified: json['lastModified'] != null ? DateTime.parse(json['lastModified']) : null,
+    isFavorite: json['isFavorite'] ?? false, 
   );
 }
 
@@ -259,7 +272,9 @@ class PasswordStrengthAnalyzer {
   }
 }
 
-// --- HOME SCREEN (RENOVADA UI/UX) ---
+enum FilterType { all, recent, favorites }
+
+// --- HOME SCREEN ---
 class PasswordManagerHome extends StatefulWidget {
   const PasswordManagerHome({super.key});
 
@@ -276,9 +291,16 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
   List<String> _filteredApps = [];
   
   final TextEditingController _searchController = TextEditingController();
+  FilterType _currentFilter = FilterType.all; 
   
   static const String _storageKey = 'encrypted_passwords';
-  final _secureStorage = const FlutterSecureStorage();
+  
+  // FIX CRÍTICO 1: AndroidOptions fuerza a que el KeyStore guarde la llave permanentemente en Android.
+  final _secureStorage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(
+      encryptedSharedPreferences: true,
+    ),
+  );
   
   @override
   void initState() {
@@ -300,7 +322,9 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
         );
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('⚡ Datos capturados de ${data['app']}'), backgroundColor: Theme.of(context).primaryColor, duration: const Duration(seconds: 4)));
       }
-    } catch (e) { print("Error checkeando intent de autofill: $e"); }
+    } catch (e) { 
+      debugPrint("Error checkeando intent de autofill: $e"); 
+    }
   }
 
   @override
@@ -309,23 +333,36 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
     super.dispose();
   }
 
-  // --- LÓGICA DE SEGURIDAD (MANTENIDA INTACTA) ---
+  // --- LÓGICA DE SEGURIDAD ---
   Future<encrypt.Key> _getInternalKey() async {
-    String? keyString = await _secureStorage.read(key: 'master_encryption_key');
-    if (keyString == null) {
+    try {
+      String? keyString = await _secureStorage.read(key: 'master_encryption_key');
+      if (keyString == null || keyString.isEmpty) {
+        final key = encrypt.Key.fromSecureRandom(32);
+        await _secureStorage.write(key: 'master_encryption_key', value: key.base64);
+        return key;
+      }
+      return encrypt.Key.fromBase64(keyString);
+    } catch (e) {
+      debugPrint("⚠️ Error al obtener la llave maestra del SecureStorage: $e");
+      // Recreamos la llave si el SecureStorage sufrió corrupción (ej. reseteo del SO)
       final key = encrypt.Key.fromSecureRandom(32);
       await _secureStorage.write(key: 'master_encryption_key', value: key.base64);
       return key;
     }
-    return encrypt.Key.fromBase64(keyString);
   }
 
   Future<String> _encryptInternal(String plainText) async {
-    final key = await _getInternalKey();
-    final iv = encrypt.IV.fromSecureRandom(16);
-    final encrypter = encrypt.Encrypter(encrypt.AES(key));
-    final encrypted = encrypter.encrypt(plainText, iv: iv);
-    return '${iv.base64}:${encrypted.base64}';
+    try {
+      final key = await _getInternalKey();
+      final iv = encrypt.IV.fromSecureRandom(16);
+      final encrypter = encrypt.Encrypter(encrypt.AES(key));
+      final encrypted = encrypter.encrypt(plainText, iv: iv);
+      return '${iv.base64}:${encrypted.base64}';
+    } catch (e) {
+      debugPrint("⚠️ Error enciprtando datos: $e");
+      return '';
+    }
   }
 
   Future<String> _decryptInternal(String encryptedFullString) async {
@@ -337,7 +374,11 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
       final key = await _getInternalKey();
       final encrypter = encrypt.Encrypter(encrypt.AES(key));
       return encrypter.decrypt(encrypted, iv: iv);
-    } catch (e) { return ''; }
+    } catch (e) { 
+      // El error típico pasa aquí si la llave se borró
+      debugPrint("⚠️ Error desencriptando datos (Posible pérdida de KeyStore): $e"); 
+      return ''; 
+    }
   }
 
   encrypt.Key _deriveKeyFromPassword(String password) {
@@ -369,51 +410,102 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
       final passwordsMap = _passwords.map((key, value) => MapEntry(key, value.toJson()));
       final String jsonString = json.encode(passwordsMap);
       await platform.invokeMethod('saveVault', {'data': jsonString});
-    } on PlatformException catch (e) { print("Error: '${e.message}'."); }
+    } on PlatformException catch (e) { 
+      debugPrint("Error al guardar en bóveda nativa: '${e.message}'."); 
+    }
   }
 
+  // FIX CRÍTICO 2: Análisis seguro del JSON para evitar que la app tire un error de tipo 'Dynamic' silenciosamente
   Future<void> _loadPasswords() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final encryptedData = prefs.getString(_storageKey);
+      
       if (encryptedData != null && encryptedData.isNotEmpty) {
         final decryptedJson = await _decryptInternal(encryptedData);
+        
         if (decryptedJson.isNotEmpty) {
-          final Map<String, dynamic> passwordsMap = json.decode(decryptedJson);
+          final Map<String, dynamic> decodedMap = json.decode(decryptedJson);
+          final Map<String, PasswordEntry> loaded = {};
+          
+          decodedMap.forEach((key, value) {
+            try {
+              // Obligamos a que el value sea interpretado como un Map<String, dynamic> seguro
+              loaded[key] = PasswordEntry.fromJson(Map<String, dynamic>.from(value));
+            } catch (e) {
+              debugPrint("Error parseando la contraseña $key: $e");
+            }
+          });
+
           if (mounted) {
             setState(() {
-              _passwords = Map.from(passwordsMap.map((key, value) => MapEntry(key, PasswordEntry.fromJson(value))));
+              _passwords = loaded;
               _filterPasswords();
             });
             _updateNativeVault();
           }
+        } else {
+          debugPrint("No se pudieron desencriptar los datos (Vacío o Llave errónea).");
         }
       }
-    } catch (e) { /* Fallo silencioso */ }
+    } catch (e, stacktrace) { 
+      debugPrint("⚠️ Fallo Crítico cargando contraseñas: $e\n$stacktrace"); 
+    }
   }
 
   Future<void> _savePasswords() async {
-    final prefs = await SharedPreferences.getInstance();
-    final passwordsMap = _passwords.map((key, value) => MapEntry(key, value.toJson()));
-    final jsonString = json.encode(passwordsMap);
-    final encryptedData = await _encryptInternal(jsonString);
-    await prefs.setString(_storageKey, encryptedData);
-    await _updateNativeVault();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final passwordsMap = _passwords.map((key, value) => MapEntry(key, value.toJson()));
+      final jsonString = json.encode(passwordsMap);
+      final encryptedData = await _encryptInternal(jsonString);
+      
+      if (encryptedData.isNotEmpty) {
+        await prefs.setString(_storageKey, encryptedData);
+        await _updateNativeVault();
+        debugPrint("Contraseñas guardadas con éxito.");
+      }
+    } catch (e) {
+      debugPrint("⚠️ Error intentando guardar: $e");
+    }
   }
 
   void _filterPasswords() {
     final query = _searchController.text.toLowerCase();
+    
     setState(() {
-      if (query.isEmpty) {
-        _filteredApps = _passwords.keys.toList();
+      List<String> tempKeys = _passwords.keys.where((appKey) {
+         final entry = _passwords[appKey]!;
+         final matchesText = query.isEmpty || entry.app.toLowerCase().contains(query) || (entry.username?.toLowerCase().contains(query) ?? false);
+         
+         if (_currentFilter == FilterType.favorites && !entry.isFavorite) {
+           return false;
+         }
+         return matchesText;
+      }).toList();
+
+      if (_currentFilter == FilterType.recent) {
+        tempKeys.sort((a, b) {
+          final dateA = _passwords[a]!.lastModified ?? _passwords[a]!.createdAt;
+          final dateB = _passwords[b]!.lastModified ?? _passwords[b]!.createdAt;
+          return dateB.compareTo(dateA); 
+        });
       } else {
-        _filteredApps = _passwords.keys.where((app) {
-           final entry = _passwords[app]!;
-           return entry.app.toLowerCase().contains(query) || (entry.username?.toLowerCase().contains(query) ?? false);
-        }).toList();
+        tempKeys.sort((a, b) => a.compareTo(b)); 
       }
-      _filteredApps.sort((a, b) => a.compareTo(b));
+
+      _filteredApps = tempKeys;
     });
+  }
+
+  void _toggleFavorite(String appKey) {
+    setState(() {
+      if (_passwords.containsKey(appKey)) {
+        _passwords[appKey]!.isFavorite = !_passwords[appKey]!.isFavorite;
+        _filterPasswords();
+      }
+    });
+    _savePasswords();
   }
 
   // --- SELECCIÓN DE TEMAS ---
@@ -454,13 +546,21 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
             passwordsMap = json.decode(jsonString);
           } catch (e) { return; }
         }
+        
+        // Importación segura con try/catch en el parseo
         Map<String, PasswordEntry> newPasswords = {};
-        passwordsMap.forEach((key, value) { newPasswords[key] = PasswordEntry.fromJson(value); });
+        passwordsMap.forEach((key, value) { 
+          try {
+            newPasswords[key] = PasswordEntry.fromJson(Map<String, dynamic>.from(value)); 
+          } catch (e) { debugPrint("Error importando $key: $e"); }
+        });
+        
         setState(() { _passwords = newPasswords; _filterPasswords(); });
         await _savePasswords();
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Datos importados con éxito'), backgroundColor: Colors.green));
       }
-    } catch (e) { /* Error */ }
+    } catch (e) { debugPrint("Fallo al importar: $e"); }
   }
 
   Future<String?> _showBackupPasswordDialog(bool isExport) {
@@ -487,11 +587,11 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
       final encryptedBackup = _encryptBackupData(json.encode(passwordsMap), password);
       final fileName = 'backup_${DateTime.now().millisecondsSinceEpoch}.json';
       await FilePicker.platform.saveFile(dialogTitle: 'Guardar backup', fileName: fileName, bytes: utf8.encode(encryptedBackup));
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Backup guardado'), backgroundColor: Colors.green));
-    } catch (e) { /* Error */ }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Backup guardado'), backgroundColor: Colors.green));
+    } catch (e) { debugPrint("Fallo al exportar: $e"); }
   }
 
-  // --- GUARDADO DESDE BOTTOM SHEET ---
   void _showSaveBottomSheet({String? initialApp, String? initialUser, String? initialPass, String? initialPkg, PasswordEntry? existingEntry, String? oldKey}) {
     HapticFeedback.lightImpact();
     showModalBottomSheet(
@@ -518,16 +618,22 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
     String appKey = app.toLowerCase();
     
     setState(() {
+      bool isFav = false; 
       if (oldKey != null && oldKey != appKey) {
+        isFav = _passwords[oldKey]?.isFavorite ?? false;
         _passwords.remove(oldKey);
+      } else if (oldKey != null) {
+        isFav = _passwords[oldKey]?.isFavorite ?? false;
       }
+      
       _passwords[appKey] = PasswordEntry(
         app: app, 
         username: username.isEmpty ? null : username, 
         password: password, 
         packageId: packageId.isEmpty ? null : packageId,
         createdAt: createdAt ?? now, 
-        lastModified: oldKey != null ? now : null
+        lastModified: oldKey != null ? now : null,
+        isFavorite: isFav 
       );
       _filterPasswords();
     });
@@ -550,19 +656,18 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
         title: Text("Bóveda Segura", style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 22)),
         actions: [
           IconButton(icon: const Icon(Icons.palette_outlined), onPressed: _showThemeDialog, tooltip: "Apariencia"),
-          PopupMenuButton(
+          PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (v) { if(v=='export') _exportPasswords(); if(v=='import') _importPasswords(); }, 
-            itemBuilder: (c) => [
-              const PopupMenuItem(value: 'export', child: Row(children: [Icon(Icons.upload_file, size: 20), SizedBox(width: 8), Text('Exportar Backup')])), 
-              const PopupMenuItem(value: 'import', child: Row(children: [Icon(Icons.download_rounded, size: 20), SizedBox(width: 8), Text('Importar Backup')]))
+            itemBuilder: (c) => <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(value: 'export', child: Row(children: [Icon(Icons.upload_file, size: 20), SizedBox(width: 8), Text('Exportar Backup')])), 
+              const PopupMenuItem<String>(value: 'import', child: Row(children: [Icon(Icons.download_rounded, size: 20), SizedBox(width: 8), Text('Importar Backup')]))
             ]
           ),
         ],
       ),
       body: Column(
         children: [
-          // Barra de Búsqueda Moderna
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: TextField(
@@ -577,25 +682,40 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
             ),
           ),
           
-          // Chips Visuales (Filtros estéticos para UX)
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: Row(
               children: [
-                ActionChip(label: const Text("Todas"), onPressed: () {}, backgroundColor: Theme.of(context).primaryColor.withValues(alpha: 0.2), side: BorderSide.none),
+                ActionChip(
+                  label: Text("Todas", style: TextStyle(color: _currentFilter == FilterType.all ? Colors.white : null)), 
+                  onPressed: () => setState(() { _currentFilter = FilterType.all; _filterPasswords(); }), 
+                  backgroundColor: _currentFilter == FilterType.all ? Theme.of(context).primaryColor : null, 
+                  side: BorderSide.none
+                ),
                 const SizedBox(width: 8),
-                ActionChip(label: const Text("Recientes"), onPressed: () {}, side: BorderSide.none),
+                ActionChip(
+                  label: Text("Recientes", style: TextStyle(color: _currentFilter == FilterType.recent ? Colors.white : null)), 
+                  onPressed: () => setState(() { _currentFilter = FilterType.recent; _filterPasswords(); }), 
+                  backgroundColor: _currentFilter == FilterType.recent ? Theme.of(context).primaryColor : null, 
+                  side: BorderSide.none
+                ),
                 const SizedBox(width: 8),
-                ActionChip(label: const Text("Favoritas"), onPressed: () {}, side: BorderSide.none),
+                ActionChip(
+                  label: Text("Favoritas", style: TextStyle(color: _currentFilter == FilterType.favorites ? Colors.white : null)), 
+                  onPressed: () => setState(() { _currentFilter = FilterType.favorites; _filterPasswords(); }), 
+                  backgroundColor: _currentFilter == FilterType.favorites ? Theme.of(context).primaryColor : null, 
+                  side: BorderSide.none
+                ),
               ],
             ),
           ),
           const SizedBox(height: 10),
 
-          // Lista de Tarjetas Modernas
           Expanded(
-            child: ListView.builder(
+            child: _filteredApps.isEmpty 
+              ? Center(child: Text("No se encontraron resultados", style: TextStyle(color: Colors.grey.withValues(alpha: 0.8))))
+              : ListView.builder(
               padding: const EdgeInsets.all(16.0),
               itemCount: _filteredApps.length,
               itemBuilder: (context, index) {
@@ -604,7 +724,12 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
                 return _PasswordCard(
                   entry: entry, 
                   isVisible: _visiblePasswords.contains(appKey), 
-                  onToggleVisibility: () => setState(() { if(_visiblePasswords.contains(appKey)) _visiblePasswords.remove(appKey); else _visiblePasswords.add(appKey); }),
+                  onToggleVisibility: () => setState(() { if(_visiblePasswords.contains(appKey)) {
+                    _visiblePasswords.remove(appKey);
+                  } else {
+                    _visiblePasswords.add(appKey);
+                  } }),
+                  onToggleFavorite: () => _toggleFavorite(appKey), 
                   onEdit: () => _showSaveBottomSheet(existingEntry: entry, oldKey: appKey),
                   onDelete: () => _deletePassword(appKey)
                 );
@@ -622,15 +747,22 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
   }
 }
 
-// --- WIDGET TARJETA DE CONTRASEÑA ---
 class _PasswordCard extends StatelessWidget {
   final PasswordEntry entry;
   final bool isVisible;
   final VoidCallback onToggleVisibility;
+  final VoidCallback onToggleFavorite;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
-  const _PasswordCard({required this.entry, required this.isVisible, required this.onToggleVisibility, required this.onEdit, required this.onDelete});
+  const _PasswordCard({
+    required this.entry, 
+    required this.isVisible, 
+    required this.onToggleVisibility, 
+    required this.onToggleFavorite, 
+    required this.onEdit, 
+    required this.onDelete
+  });
 
   Color _getAvatarColor(String appName) {
     final colors = [Colors.redAccent, Colors.blueAccent, Colors.greenAccent, Colors.orangeAccent, Colors.purpleAccent, Colors.tealAccent, Colors.indigoAccent];
@@ -651,7 +783,15 @@ class _PasswordCard extends StatelessWidget {
           radius: 24,
           child: Text(entry.app.isNotEmpty ? entry.app[0].toUpperCase() : '?', style: GoogleFonts.outfit(fontWeight: FontWeight.bold, fontSize: 20)),
         ),
-        title: Text(entry.app, style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Row(
+          children: [
+            Flexible(child: Text(entry.app, style: const TextStyle(fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
+            if (entry.isFavorite) ...[
+              const SizedBox(width: 6),
+              const Icon(Icons.star_rounded, color: Colors.amber, size: 16),
+            ]
+          ],
+        ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -665,21 +805,24 @@ class _PasswordCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(icon: Icon(isVisible ? Icons.visibility_off : Icons.visibility, color: Colors.grey), onPressed: onToggleVisibility),
-            PopupMenuButton(
+            PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert, color: Colors.grey),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               onSelected: (val) {
+                if (val == 'favorite') { onToggleFavorite(); HapticFeedback.selectionClick(); }
                 if (val == 'edit') onEdit();
                 if (val == 'copy_pass') { Clipboard.setData(ClipboardData(text: entry.password)); HapticFeedback.mediumImpact(); }
                 if (val == 'copy_user' && entry.username != null) { Clipboard.setData(ClipboardData(text: entry.username!)); HapticFeedback.mediumImpact(); }
                 if (val == 'delete') onDelete();
               },
-              itemBuilder: (context) => [
+              itemBuilder: (context) => <PopupMenuEntry<String>>[
+                PopupMenuItem<String>(value: 'favorite', child: Row(children: [Icon(entry.isFavorite ? Icons.star_outline_rounded : Icons.star_rounded, color: Colors.amber, size: 18), const SizedBox(width: 8), Text(entry.isFavorite ? 'Quitar de Favoritos' : 'Hacer Favorito')])),
+                const PopupMenuDivider(),
                 if (entry.username != null && entry.username!.isNotEmpty)
-                  const PopupMenuItem(value: 'copy_user', child: Row(children: [Icon(Icons.person_outline, size: 18), SizedBox(width: 8), Text('Copiar Usuario')])),
-                const PopupMenuItem(value: 'copy_pass', child: Row(children: [Icon(Icons.lock_outline, size: 18), SizedBox(width: 8), Text('Copiar Password')])),
-                const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 18), SizedBox(width: 8), Text('Editar')])),
-                const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, color: Colors.red, size: 18), SizedBox(width: 8), Text('Eliminar', style: TextStyle(color: Colors.red))])),
+                  const PopupMenuItem<String>(value: 'copy_user', child: Row(children: [Icon(Icons.person_outline, size: 18), SizedBox(width: 8), Text('Copiar Usuario')])),
+                const PopupMenuItem<String>(value: 'copy_pass', child: Row(children: [Icon(Icons.lock_outline, size: 18), SizedBox(width: 8), Text('Copiar Password')])),
+                const PopupMenuItem<String>(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 18), SizedBox(width: 8), Text('Editar')])),
+                const PopupMenuItem<String>(value: 'delete', child: Row(children: [Icon(Icons.delete, color: Colors.red, size: 18), SizedBox(width: 8), Text('Eliminar', style: TextStyle(color: Colors.red))])),
               ],
             ),
           ],
@@ -689,7 +832,6 @@ class _PasswordCard extends StatelessWidget {
   }
 }
 
-// --- MENU DE OPCION DE TEMA ---
 class _ThemeOption extends StatelessWidget {
   final String title;
   final AppThemeMode mode;
@@ -697,24 +839,27 @@ class _ThemeOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // ignore: deprecated_member_use
     return RadioListTile<AppThemeMode>(
       title: Text(title),
       value: mode,
+      // ignore: deprecated_member_use
       groupValue: appThemeNotifier.value,
       activeColor: Theme.of(context).primaryColor,
+      // ignore: deprecated_member_use
       onChanged: (val) async { 
         if (val != null) {
+          final navigator = Navigator.of(context);
           appThemeNotifier.value = val;
           final prefs = await SharedPreferences.getInstance();
           await prefs.setInt('theme_mode', AppThemeMode.values.indexOf(val));
-          if (context.mounted) Navigator.pop(context);
+          navigator.pop();
         }
       },
     );
   }
 }
 
-// --- BOTTOM SHEET (AGREGAR/EDITAR CON GENERADOR) ---
 class PasswordEditorSheet extends StatefulWidget {
   final PasswordEntry? entry;
   final String? initialApp;
@@ -823,7 +968,6 @@ class _PasswordEditorSheetState extends State<PasswordEditorSheet> {
             ),
           ),
           
-          // Medidor de Fuerza en tiempo real
           if (_passController.text.isNotEmpty) ...[
             const SizedBox(height: 12),
             Row(
@@ -843,7 +987,6 @@ class _PasswordEditorSheetState extends State<PasswordEditorSheet> {
             ),
           ],
 
-          // Opciones Avanzadas
           const SizedBox(height: 16),
           GestureDetector(
             onTap: () => setState(() => _showAdvanced = !_showAdvanced),

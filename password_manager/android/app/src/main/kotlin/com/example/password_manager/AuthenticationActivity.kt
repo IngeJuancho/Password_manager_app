@@ -9,138 +9,145 @@ import android.util.Log
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillManager
 import android.view.autofill.AutofillValue
+import android.widget.RemoteViews
 import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
-import java.util.concurrent.Executor
 
 @RequiresApi(Build.VERSION_CODES.O)
 class AuthenticationActivity : FragmentActivity() {
 
-    private lateinit var executor: Executor
-    private lateinit var biometricPrompt: BiometricPrompt
-    private lateinit var promptInfo: BiometricPrompt.PromptInfo
-
     companion object {
-        private const val TAG = "🔐AuthActivity"
+        private const val TAG = "AuthActivity"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // --- UX MEJORADA: Transición suave de entrada ---
-        @Suppress("DEPRECATION")
-        overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
-        
-        Log.d(TAG, "🔐 Activity de autenticación iniciada")
-        
-        // 1. Configurar biometría
-        setupBiometricAuthentication()
-        
-        // 2. Iniciar autenticación inmediatamente
+        Log.d(TAG, "Iniciada para: ${intent.getStringExtra("app_name")}")
         authenticateUser()
-    }
-
-    // --- UX MEJORADA: Transición suave de salida ---
-    override fun finish() {
-        super.finish()
-        @Suppress("DEPRECATION")
-        overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
-    }
-
-    private fun setupBiometricAuthentication() {
-        executor = ContextCompat.getMainExecutor(this)
-        
-        biometricPrompt = BiometricPrompt(this, executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                    Log.e(TAG, "❌ Error de autenticación: $errString")
-                    
-                    // Si falla o cancela, cerramos la activity sin resultado OK
-                    setResult(RESULT_CANCELED)
-                    finish()
-                }
-
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    super.onAuthenticationSucceeded(result)
-                    Log.d(TAG, "✅ Autenticación exitosa")
-                    
-                    // 3. Si la huella es correcta, construimos el Dataset
-                    onAuthenticationSuccess()
-                }
-
-                override fun onAuthenticationFailed() {
-                    super.onAuthenticationFailed()
-                    Toast.makeText(applicationContext, "Huella no reconocida. Intenta de nuevo.", Toast.LENGTH_SHORT).show()
-                }
-            })
-
-        val appName = intent.getStringExtra("app_name") ?: "la aplicación"
-        
-        // --- UX MEJORADA: Textos más claros y amigables ---
-        promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Inicio de sesión seguro")
-            .setSubtitle("Verifica tu identidad para entrar a $appName")
-            .setNegativeButtonText("Cancelar")
-            .setConfirmationRequired(false) 
-            .build()
     }
 
     private fun authenticateUser() {
         val biometricManager = BiometricManager.from(this)
-        if (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS) {
-            biometricPrompt.authenticate(promptInfo)
-        } else {
-            // Si no hay biometría configurada, permitimos pasar
-            Log.w(TAG, "⚠️ Biometría no disponible - autocompletando directamente")
+        val canAuthenticate = biometricManager.canAuthenticate(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or
+            BiometricManager.Authenticators.BIOMETRIC_WEAK
+        )
+        Log.d(TAG, "Estado biométrico: $canAuthenticate")
+
+        if (canAuthenticate != BiometricManager.BIOMETRIC_SUCCESS) {
+            Log.w(TAG, "Sin biometría disponible, rellenando directo.")
             onAuthenticationSuccess()
+            return
         }
+
+        val executor = ContextCompat.getMainExecutor(this)
+
+        val callback = object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                super.onAuthenticationError(errorCode, errString)
+                Log.e(TAG, "Error biométrico ($errorCode): $errString")
+                setResult(RESULT_CANCELED)
+                finish()
+            }
+
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                super.onAuthenticationSucceeded(result)
+                Log.d(TAG, "Huella verificada OK.")
+                onAuthenticationSuccess()
+            }
+
+            override fun onAuthenticationFailed() {
+                super.onAuthenticationFailed()
+                Toast.makeText(applicationContext, "Huella no reconocida", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // FIX: Un solo PromptInfo SIN setNegativeButtonText().
+        // Cuando se incluye DEVICE_CREDENTIAL en setAllowedAuthenticators(),
+        // agregar setNegativeButtonText() lanza IllegalArgumentException y crashea.
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Inicio de sesión seguro")
+            .setSubtitle("Verifica tu identidad para entrar a ${intent.getStringExtra("app_name") ?: "la app"}")
+            .setConfirmationRequired(false)
+            .setAllowedAuthenticators(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                BiometricManager.Authenticators.BIOMETRIC_WEAK or
+                BiometricManager.Authenticators.DEVICE_CREDENTIAL
+            )
+            .build()
+
+        BiometricPrompt(this, executor, callback).authenticate(promptInfo)
     }
 
     private fun onAuthenticationSuccess() {
         try {
-            // A. Recuperar los datos planos
             val username = intent.getStringExtra("username") ?: ""
             val password = intent.getStringExtra("password") ?: ""
-            val appName = intent.getStringExtra("app_name") ?: "App"
+            val appName  = intent.getStringExtra("app_name") ?: "App"
 
-            // B. Recuperar los IDs de los campos (Parcelables reales)
-            val usernameIds = intent.getParcelableArrayListExtra<AutofillId>("username_ids")
-            val passwordIds = intent.getParcelableArrayListExtra<AutofillId>("password_ids")
+            Log.d(TAG, "Construyendo Dataset → app=$appName, pass=${if (password.isNotEmpty()) "OK" else "VACÍO"}")
 
-            // C. Construir el Dataset de respuesta
-            val datasetBuilder = Dataset.Builder()
+            val usernameIds: ArrayList<AutofillId>? =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableArrayListExtra("username_ids", AutofillId::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableArrayListExtra("username_ids")
+                }
 
-            // Llenar campos de usuario
-            if (username.isNotEmpty() && usernameIds != null) {
+            val passwordIds: ArrayList<AutofillId>? =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableArrayListExtra("password_ids", AutofillId::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableArrayListExtra("password_ids")
+                }
+
+            Log.d(TAG, "IDs → usernameIds=${usernameIds?.size}, passwordIds=${passwordIds?.size}")
+
+            val responsePresentation = RemoteViews(packageName, R.layout.autofill_item).apply {
+                setTextViewText(R.id.autofill_title, "🔐 $appName")
+                setTextViewText(R.id.autofill_subtitle, username.ifEmpty { "Autocompletado" })
+            }
+
+            val datasetBuilder = Dataset.Builder(responsePresentation)
+            var hasValues = false
+
+            if (username.isNotEmpty() && !usernameIds.isNullOrEmpty()) {
                 for (id in usernameIds) {
                     datasetBuilder.setValue(id, AutofillValue.forText(username))
+                    hasValues = true
                 }
             }
 
-            // Llenar campos de contraseña
-            if (password.isNotEmpty() && passwordIds != null) {
+            if (password.isNotEmpty() && !passwordIds.isNullOrEmpty()) {
                 for (id in passwordIds) {
                     datasetBuilder.setValue(id, AutofillValue.forText(password))
+                    hasValues = true
                 }
             }
 
-            // D. Devolver el resultado al sistema Android Autofill
-            val replyIntent = Intent()
-            replyIntent.putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, datasetBuilder.build())
-            
+            if (!hasValues) {
+                Log.e(TAG, "Sin valores para rellenar.")
+                setResult(RESULT_CANCELED)
+                finish()
+                return
+            }
+
+            val replyIntent = Intent().apply {
+                putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, datasetBuilder.build())
+            }
+
+            Log.d(TAG, "Enviando RESULT_OK.")
             setResult(Activity.RESULT_OK, replyIntent)
-            
-            // UX MEJORADA: Feedback de éxito con el ícono del candado
-            Toast.makeText(this, "🔓 $appName desbloqueada", Toast.LENGTH_SHORT).show()
             finish()
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error construyendo dataset post-auth", e)
+            Log.e(TAG, "Excepción construyendo Dataset", e)
             setResult(RESULT_CANCELED)
             finish()
         }
