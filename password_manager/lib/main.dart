@@ -295,10 +295,12 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
   
   static const String _storageKey = 'encrypted_passwords';
   
-  // FIX CRÍTICO 1: AndroidOptions fuerza a que el KeyStore guarde la llave permanentemente en Android.
+  // FIX: resetOnError limpia datos corruptos del KeyStore en lugar de fallar
+  // silenciosamente con BadPaddingException en cada arranque.
   final _secureStorage = const FlutterSecureStorage(
     aOptions: AndroidOptions(
       encryptedSharedPreferences: true,
+      resetOnError: true,
     ),
   );
   
@@ -345,7 +347,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
       return encrypt.Key.fromBase64(keyString);
     } catch (e) {
       debugPrint("⚠️ Error al obtener la llave maestra del SecureStorage: $e");
-      // Recreamos la llave si el SecureStorage sufrió corrupción (ej. reseteo del SO)
       final key = encrypt.Key.fromSecureRandom(32);
       await _secureStorage.write(key: 'master_encryption_key', value: key.base64);
       return key;
@@ -375,7 +376,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
       final encrypter = encrypt.Encrypter(encrypt.AES(key));
       return encrypter.decrypt(encrypted, iv: iv);
     } catch (e) { 
-      // El error típico pasa aquí si la llave se borró
       debugPrint("⚠️ Error desencriptando datos (Posible pérdida de KeyStore): $e"); 
       return ''; 
     }
@@ -415,7 +415,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
     }
   }
 
-  // FIX CRÍTICO 2: Análisis seguro del JSON para evitar que la app tire un error de tipo 'Dynamic' silenciosamente
   Future<void> _loadPasswords() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -430,7 +429,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
           
           decodedMap.forEach((key, value) {
             try {
-              // Obligamos a que el value sea interpretado como un Map<String, dynamic> seguro
               loaded[key] = PasswordEntry.fromJson(Map<String, dynamic>.from(value));
             } catch (e) {
               debugPrint("Error parseando la contraseña $key: $e");
@@ -508,7 +506,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
     _savePasswords();
   }
 
-  // --- SELECCIÓN DE TEMAS ---
   void _showThemeDialog() {
     HapticFeedback.lightImpact();
     showDialog(
@@ -527,7 +524,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
     );
   }
 
-  // --- RESPALDOS ---
   Future<void> _importPasswords() async {
      try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['json']);
@@ -547,7 +543,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
           } catch (e) { return; }
         }
         
-        // Importación segura con try/catch en el parseo
         Map<String, PasswordEntry> newPasswords = {};
         passwordsMap.forEach((key, value) { 
           try {
@@ -648,7 +643,6 @@ class _PasswordManagerHomeState extends State<PasswordManagerHome> {
      _savePasswords();
   }
 
-  // --- WIDGETS UI PRINCIPAL ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
