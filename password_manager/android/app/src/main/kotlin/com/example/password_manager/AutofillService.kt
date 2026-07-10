@@ -41,8 +41,10 @@ class AutofillService : android.service.autofill.AutofillService() {
             }
 
             val structure = context.structure
-            val packageName = structure.activityComponent.packageName
-            Log.d(TAG, "onFillRequest para: $packageName")
+            val packageName = structure.activityComponent?.packageName ?: ""
+            val webDomain = extractWebDomain(structure)
+            val effectiveAppName = webDomain ?: getAppName(packageName)
+            Log.d(TAG, "onFillRequest para: $packageName (Dominio: $webDomain)")
 
             val fields = detectLoginFields(structure)
 
@@ -62,7 +64,7 @@ class AutofillService : android.service.autofill.AutofillService() {
 
             if (jsonString != null) {
                 val passwordList = parsePasswords(jsonString).toMutableMap()
-                val matches = findMatchingPasswords(passwordList, packageName)
+                val matches = findMatchingPasswords(passwordList, packageName, webDomain)
                 var vaultWasModified = false
 
                 Log.d(TAG, "Credenciales coincidentes: ${matches.size}")
@@ -73,13 +75,20 @@ class AutofillService : android.service.autofill.AutofillService() {
                             request.inlineSuggestionsRequest
                         else null
 
+                    // Respetar el límite de sugerencias inline del teclado
+                    val maxInline = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+                        inlineRequest?.maxSuggestionCount ?: Int.MAX_VALUE
+                    else Int.MAX_VALUE
+
                     matches.entries.forEachIndexed { index, (key, entry) ->
                         val uniqueRequestCode = (key + index).hashCode()
+                        // Solo pasar inlineRequest si no hemos excedido el límite
+                        val effectiveInlineReq = if (index < maxInline - 1) inlineRequest else null
                         val dataset = buildAuthenticatedDataset(
                             entry = entry,
                             fields = fields,
                             targetPackage = packageName,
-                            inlineRequest = inlineRequest,
+                            inlineRequest = effectiveInlineReq,
                             uniqueRequestCode = uniqueRequestCode
                         )
                         responseBuilder.addDataset(dataset)
@@ -87,6 +96,18 @@ class AutofillService : android.service.autofill.AutofillService() {
                         if (entry.packageId.isNullOrEmpty()) {
                             passwordList[key] = entry.copy(packageId = packageName)
                             vaultWasModified = true
+                        }
+                    }
+
+                    // Chip piñado "Abrir Password Manager" como fallback
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && inlineRequest != null) {
+                        try {
+                            val openAppDataset = buildOpenAppInlineDataset(inlineRequest, fields)
+                            if (openAppDataset != null) {
+                                responseBuilder.addDataset(openAppDataset)
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "No se pudo crear chip de fallback: ${e.message}")
                         }
                     }
 
@@ -173,7 +194,6 @@ class AutofillService : android.service.autofill.AutofillService() {
         if (specs.isEmpty()) return null
 
         return try {
-            // Intent fantasma: obliga al SO a usar el IntentSender de setAuthentication()
             val dummyIntent = PendingIntent.getActivity(
                 this, 0, Intent(), PendingIntent.FLAG_IMMUTABLE
             )
@@ -194,8 +214,68 @@ class AutofillService : android.service.autofill.AutofillService() {
         }
     }
 
+    /**
+     * Chip piñado (pinned) que aparece al final de la barra inline del teclado.
+     * Si el usuario no encuentra su cuenta, puede tocar este chip para abrir
+     * la app completa y buscar manualmente.
+     */
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun buildOpenAppInlineDataset(
+        inlineRequest: InlineSuggestionsRequest,
+        fields: LoginFields
+    ): Dataset? {
+        val specs = inlineRequest.inlinePresentationSpecs
+        if (specs.isEmpty()) return null
+
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val pendingFlags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        val pendingIntent = PendingIntent.getActivity(
+            this, "open_app_chip".hashCode(), openAppIntent, pendingFlags
+        )
+
+        val content = InlineSuggestionUi
+            .newContentBuilder(pendingIntent)
+            .setTitle("🔑 Buscar en bóveda")
+            .setStartIcon(
+                android.graphics.drawable.Icon.createWithResource(this, R.mipmap.ic_launcher)
+            )
+            .build()
+
+        // El último spec es el piñado
+        val pinnedSpec = specs[specs.size - 1]
+        val inlinePresentation = InlinePresentation(content.slice, pinnedSpec, true)
+
+        val dropdownView = RemoteViews(packageName, R.layout.autofill_item).apply {
+            setTextViewText(R.id.autofill_title, "🔑 Buscar en bóveda")
+            setTextViewText(R.id.autofill_subtitle, "Abrir Password Manager")
+        }
+
+        val datasetBuilder = Dataset.Builder(dropdownView)
+        datasetBuilder.setInlinePresentation(inlinePresentation)
+        datasetBuilder.setAuthentication(pendingIntent.intentSender)
+
+        val allIds = fields.usernameIds + fields.passwordIds
+        for (id in allIds) {
+            datasetBuilder.setValue(id, null, dropdownView)
+        }
+
+        return datasetBuilder.build()
+    }
+
     // ==================== DETECCIÓN HEURÍSTICA DE CAMPOS ====================
 
+    /**
+     * Sistema de puntuación de campos mejorado.
+     * 
+     * Prioridades de detección (de mayor a menor peso):
+     * 1. autofillHints estándar de Android (View.AUTOFILL_HINT_*)
+     * 2. Atributos HTML (type, autocomplete, name, id)
+     * 3. InputType del sistema (TYPE_TEXT_VARIATION_PASSWORD, etc.)
+     * 4. Texto contextual (hint, idEntry, contentDescription)
+     * 5. Heurística posicional (campo anterior a contraseña = usuario)
+     */
     private fun detectLoginFields(structure: AssistStructure): LoginFields {
         val allFields = mutableListOf<FieldInfo>()
         for (i in 0 until structure.windowNodeCount) {
@@ -208,37 +288,95 @@ class AutofillService : android.service.autofill.AutofillService() {
             var uScore = 0
             var pScore = 0
 
+            // ── 1. AUTOFILL HINTS ESTÁNDAR (máxima prioridad) ──
+            val hints = field.autofillHints
+            if (hints != null) {
+                for (h in hints) {
+                    val hLower = h.lowercase(Locale.ROOT)
+                    when {
+                        hLower == View.AUTOFILL_HINT_USERNAME.lowercase() -> uScore += 60
+                        hLower == View.AUTOFILL_HINT_EMAIL_ADDRESS.lowercase() -> uScore += 55
+                        hLower == View.AUTOFILL_HINT_PHONE.lowercase() -> uScore += 35
+                        hLower == View.AUTOFILL_HINT_PASSWORD.lowercase() -> pScore += 60
+                        // W3C autocomplete values que Android pasa como hint
+                        hLower == "current-password" -> pScore += 60
+                        hLower == "new-password" -> pScore += 40
+                        hLower == "username" -> uScore += 60
+                        hLower == "email" -> uScore += 55
+                        hLower == "tel" -> uScore += 35
+                    }
+                }
+            }
+
+            // ── 2. ATRIBUTOS HTML (navegadores web) ──
+            val htmlAttrs = field.htmlAttributes
+            if (htmlAttrs != null) {
+                val htmlType = htmlAttrs["type"]?.lowercase(Locale.ROOT) ?: ""
+                val htmlAutocomplete = htmlAttrs["autocomplete"]?.lowercase(Locale.ROOT) ?: ""
+                val htmlName = htmlAttrs["name"]?.lowercase(Locale.ROOT) ?: ""
+                val htmlId = htmlAttrs["id"]?.lowercase(Locale.ROOT) ?: ""
+
+                // type="password" es la señal más fuerte en HTML
+                if (htmlType == "password") pScore += 55
+                // type="email" o type="tel" indican campo de usuario
+                if (htmlType == "email" || htmlType == "tel") uScore += 45
+
+                // autocomplete es el estándar W3C
+                if (htmlAutocomplete.contains("password") || htmlAutocomplete.contains("current-password")) pScore += 55
+                if (htmlAutocomplete == "new-password") pScore += 35
+                if (htmlAutocomplete.contains("username") || htmlAutocomplete.contains("email")) uScore += 50
+                if (htmlAutocomplete.contains("tel")) uScore += 30
+
+                // name e id del elemento HTML
+                val htmlContext = "$htmlName $htmlId"
+                val htmlUserRegex = Regex("(?i)(user|email|login|account|correo|usuario|rfc|curp)")
+                val htmlPassRegex = Regex("(?i)(pass|pwd|clave|contrase|pin|nip)")
+                if (htmlUserRegex.containsMatchIn(htmlContext)) uScore += 30
+                if (htmlPassRegex.containsMatchIn(htmlContext)) pScore += 30
+
+                // Excluir campos de búsqueda HTML
+                val htmlNoiseRegex = Regex("(?i)(search|query|filter|subscribe|newsletter|register_email)")
+                if (htmlNoiseRegex.containsMatchIn(htmlContext) || htmlAutocomplete == "off") {
+                    uScore -= 40
+                    pScore -= 40
+                }
+            }
+
+            // ── 3. INPUT TYPE del sistema Android ──
             val inputType = field.inputType
-            val isMultiline = (inputType and InputType.TYPE_TEXT_FLAG_IME_MULTI_LINE) != 0
+            val isMultiline = (inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0 ||
+                              (inputType and InputType.TYPE_TEXT_FLAG_IME_MULTI_LINE) != 0
 
-            val isTextPassword =
-                (inputType and InputType.TYPE_MASK_VARIATION) == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
-                (inputType and InputType.TYPE_MASK_VARIATION) == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
-            val isNumberPassword =
-                (inputType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_NUMBER &&
-                (inputType and InputType.TYPE_MASK_VARIATION) == InputType.TYPE_NUMBER_VARIATION_PASSWORD
-            if (isTextPassword || isNumberPassword) pScore += 60
+            val typeVariation = inputType and InputType.TYPE_MASK_VARIATION
+            val typeClass = inputType and InputType.TYPE_MASK_CLASS
 
-            val isEmail =
-                (inputType and InputType.TYPE_MASK_VARIATION) == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
-                (inputType and InputType.TYPE_MASK_VARIATION) == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
+            val isTextPassword = typeVariation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                                 typeVariation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
+                                 typeVariation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            val isNumberPassword = typeClass == InputType.TYPE_CLASS_NUMBER &&
+                                   typeVariation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            if (isTextPassword || isNumberPassword) pScore += 50
+
+            val isEmail = typeVariation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
+                          typeVariation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
             if (isEmail) uScore += 40
 
-            val hintsJoined = field.autofillHints?.joinToString(" ")?.lowercase() ?: ""
-            if (hintsJoined.contains("username") || hintsJoined.contains("email")) uScore += 50
-            if (hintsJoined.contains("current-password")) pScore += 50
-            if (hintsJoined.contains("new-password")) pScore += 20
-            if (hintsJoined == "password") pScore += 40
+            val isPhone = typeClass == InputType.TYPE_CLASS_PHONE
+            if (isPhone) uScore += 25
 
-            val contextText =
-                "${field.idEntry} ${field.hint} ${field.contentDescription} ${field.className}".lowercase()
+            // ── 4. TEXTO CONTEXTUAL (hint, idEntry, contentDescription) ──
+            val contextText = listOf(
+                field.idEntry, field.hint, field.contentDescription
+            ).joinToString(" ").lowercase(Locale.ROOT)
 
-            val userRegex = Regex("(?i)\\b(user|username|email|correo|usuario|login|account|usr|rfc|curp|nss|id|dni|cedula|identidad|identificacion)\\b")
-            val passRegex = Regex("(?i)\\b(password|contraseña|clave|pwd|passcode|pin|contrasena|ciec|fiel|nip|token)\\b")
-            val noiseRegex = Regex("(?i)\\b(search|buscar|query|chat|comment|mensaje|address|phone|tel|captcha)\\b")
+            val userRegex = Regex("(?i)\\b(user|username|email|e-mail|correo|usuario|login|account|usr|rfc|curp|nss|dni|cedula|identidad|identificacion|matricula|folio|numero.?de.?cliente|phone|telefono|celular)\\b")
+            val passRegex = Regex("(?i)\\b(password|contraseña|clave|pwd|passcode|pin|contrasena|ciec|fiel|nip|token|secret|codigo.?de.?acceso)\\b")
+            val noiseRegex = Regex("(?i)\\b(search|buscar|busqueda|query|chat|comment|comentario|mensaje|message|address|direccion|captcha|otp|verification|codigo.?de.?verificacion|nombre.?completo|full.?name|first.?name|last.?name|apellido|city|ciudad|state|estado|zip|postal|country|pais|subscribe|promo|coupon|cupon)\\b")
 
             if (userRegex.containsMatchIn(contextText)) uScore += 30
             if (passRegex.containsMatchIn(contextText)) pScore += 30
+
+            // Penalizaciones fuertes por campos de ruido
             if (noiseRegex.containsMatchIn(contextText) || isMultiline) {
                 uScore -= 100
                 pScore -= 100
@@ -250,13 +388,32 @@ class AutofillService : android.service.autofill.AutofillService() {
             }
         }
 
-        val bestPasswordIndex = allFields.indexOfFirst {
-            (scores[it.id]?.passwordScore ?: 0) >= 50
+        // ── 5. HEURÍSTICA POSICIONAL ──
+        // El campo inmediatamente anterior a una contraseña con alta confianza
+        // casi siempre es el campo de usuario. También revisamos 2 campos atrás
+        // para formularios con campos intermedios (ej: "recordar sesión" checkbox).
+        val passwordCandidates = allFields.indices.filter {
+            (scores[allFields[it].id]?.passwordScore ?: 0) >= 40
         }
-        if (bestPasswordIndex > 0) {
-            val prevField = allFields[bestPasswordIndex - 1]
-            scores[prevField.id]?.let {
-                if (it.usernameScore >= 0) it.usernameScore += 40
+
+        for (pwIdx in passwordCandidates) {
+            // Campo inmediatamente anterior
+            if (pwIdx > 0) {
+                val prevField = allFields[pwIdx - 1]
+                scores[prevField.id]?.let {
+                    if (it.usernameScore >= -10 && it.passwordScore < 30) {
+                        it.usernameScore += 40
+                    }
+                }
+            }
+            // Dos campos atrás (para formularios con checkboxes intermedios)
+            if (pwIdx > 1) {
+                val prev2Field = allFields[pwIdx - 2]
+                scores[prev2Field.id]?.let {
+                    if (it.usernameScore >= 0 && it.passwordScore < 20) {
+                        it.usernameScore += 20
+                    }
+                }
             }
         }
 
@@ -279,14 +436,23 @@ class AutofillService : android.service.autofill.AutofillService() {
         val isNativeInput = node.inputType != 0 || className.contains("EditText", ignoreCase = true)
 
         var isHtmlInput = false
+        var htmlAttributes: Map<String, String>? = null
         var htmlHints: Array<String>? = null
 
         if (node.htmlInfo != null && "input" == node.htmlInfo?.tag) {
             isHtmlInput = true
-            htmlHints = node.htmlInfo?.attributes
-                ?.filter { it.first in listOf("autocomplete", "name", "id", "type") }
-                ?.map { it.second }
-                ?.toTypedArray()
+            val attrs = node.htmlInfo?.attributes
+            if (attrs != null) {
+                // Extraer atributos HTML relevantes como mapa para análisis detallado
+                htmlAttributes = attrs
+                    .filter { it.first in listOf("autocomplete", "name", "id", "type", "placeholder", "aria-label") }
+                    .associate { it.first to it.second }
+                // También mantenerlos como hints para compatibilidad
+                htmlHints = attrs
+                    .filter { it.first in listOf("autocomplete", "name", "id", "type") }
+                    .map { it.second }
+                    .toTypedArray()
+            }
         }
 
         val isVisibleAndSized =
@@ -306,6 +472,7 @@ class AutofillService : android.service.autofill.AutofillService() {
                     contentDescription = node.contentDescription?.toString() ?: "",
                     inputType = node.inputType,
                     autofillHints = effectiveHints,
+                    htmlAttributes = htmlAttributes,
                     className = className,
                     isFocused = node.isFocused,
                     visibility = node.visibility ?: View.VISIBLE
@@ -333,8 +500,10 @@ class AutofillService : android.service.autofill.AutofillService() {
                 ?.let { getTextFromNode(structure, it) } ?: ""
 
             if (password.isNotEmpty()) {
-                val packageId = structure.activityComponent.packageName
-                val appName = getAppName(packageId)
+                val packageId = structure.activityComponent?.packageName ?: ""
+                val webDomain = extractWebDomain(structure)
+                val appName = webDomain ?: getAppName(packageId)
+                
                 val intent = Intent(this, MainActivity::class.java).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     action = "SAVE_NEW_PASSWORD"
@@ -367,16 +536,20 @@ class AutofillService : android.service.autofill.AutofillService() {
 
     private fun findMatchingPasswords(
         passwordList: Map<String, PasswordEntry>,
-        currentPackage: String
+        currentPackage: String,
+        webDomain: String? = null
     ): Map<String, PasswordEntry> {
         val packageLower = currentPackage.lowercase(Locale.ROOT)
         val packageSegments = packageLower.split(".")
+        val domainLower = webDomain?.lowercase(Locale.ROOT)
 
         return passwordList.filter { (_, entry) ->
             val appClean = entry.app.lowercase(Locale.ROOT).replace(" ", "").replace(".", "")
             val packageIdLower = entry.packageId?.lowercase(Locale.ROOT) ?: ""
 
             if (packageIdLower == packageLower) return@filter true
+            if (domainLower != null && domainLower.contains(appClean)) return@filter true
+            if (domainLower != null && appClean.contains(domainLower.replace(".com", "").replace(".net", "").replace(".org", ""))) return@filter true
 
             val isInSegments = appClean.split(".").any { frag ->
                 frag.length > 4 && packageSegments.contains(frag)
@@ -436,6 +609,33 @@ class AutofillService : android.service.autofill.AutofillService() {
         return null
     }
 
+    private fun extractWebDomain(structure: AssistStructure): String? {
+        for (i in 0 until structure.windowNodeCount) {
+            val domain = findWebDomainInNode(structure.getWindowNodeAt(i).rootViewNode)
+            if (domain != null) return domain
+        }
+        return null
+    }
+
+    private fun findWebDomainInNode(node: AssistStructure.ViewNode): String? {
+        val fullDomain = node.webDomain
+        if (fullDomain != null) {
+            return try {
+                val uri = android.net.Uri.parse(if (!fullDomain.startsWith("http")) "https://$fullDomain" else fullDomain)
+                uri.host?.removePrefix("www.")?.replaceFirstChar {
+                    if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString()
+                } ?: fullDomain
+            } catch (e: Exception) {
+                fullDomain
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val domain = findWebDomainInNode(node.getChildAt(i))
+            if (domain != null) return domain
+        }
+        return null
+    }
+
     // ==================== DATA CLASSES ====================
 
     @Keep
@@ -460,6 +660,7 @@ class AutofillService : android.service.autofill.AutofillService() {
         val contentDescription: String,
         val inputType: Int,
         val autofillHints: Array<String>?,
+        val htmlAttributes: Map<String, String>?,
         val className: String,
         val isFocused: Boolean,
         val visibility: Int

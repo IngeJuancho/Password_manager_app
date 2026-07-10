@@ -68,29 +68,40 @@ class MainActivity: FlutterFragmentActivity() {
     // --- 3. CAPTURA DE INTENTS (Cuando Android abre tu app automáticamente) ---
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        handleIntent(intent)
+        // En onCreate, Flutter aún NO está listo para recibir mensajes.
+        // Solo guardamos los datos; Flutter los recogerá con checkPendingEntry.
+        savePendingFromIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleIntent(intent)
+        // En onNewIntent, Flutter YA está corriendo.
+        // Guardamos los datos Y se los enviamos en tiempo real.
+        savePendingFromIntent(intent)
+        notifyFlutterIfReady()
     }
 
-    private fun handleIntent(intent: Intent) {
-        // Verificamos si la App fue abierta por nuestro AutofillService
+    private fun savePendingFromIntent(intent: Intent) {
         if (intent.action == "SAVE_NEW_PASSWORD") {
             val appName = intent.getStringExtra("app_name") ?: ""
             val packageId = intent.getStringExtra("package_id") ?: ""
             val username = intent.getStringExtra("username") ?: ""
             val password = intent.getStringExtra("password") ?: ""
 
-            // Guardamos los datos en memoria para que Flutter los recoja
             pendingNewEntry = mapOf(
                 "app" to appName,
                 "packageId" to packageId,
                 "username" to username,
                 "password" to password
             )
+        }
+    }
+
+    private fun notifyFlutterIfReady() {
+        val entry = pendingNewEntry ?: return
+        flutterEngine?.dartExecutor?.binaryMessenger?.let { messenger ->
+            MethodChannel(messenger, CHANNEL_NAV).invokeMethod("onPendingEntry", entry)
+            pendingNewEntry = null
         }
     }
 }
